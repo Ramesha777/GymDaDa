@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>GymDD - Premium Fitness Center</title>
 <link rel="stylesheet" href="CSS/style.css">
+<link rel="stylesheet" href="CSS/membership.css">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700;800&display=swap" rel="stylesheet">
@@ -19,7 +20,7 @@
     <div class="nav-links" id="navLinks">
         <ul>
             <li><a href="#home" class="active">HOME</a></li>
-            <li><a href="#plans">PLANS</a></li>
+            <li><a href="membership.html">PLANS</a></li>
             <li><a href="#classes">CLASSES</a></li>
             <li><a href="#trainers">TRAINERS</a></li>
             <li><a href="#gallery">GALLERY</a></li>
@@ -127,43 +128,27 @@
             <h2>Membership Plans</h2>
             <p>Flexible options designed for every fitness level and budget.</p>
         </div>
-        <div class="grid grid-3">
-            <div class="plan-card">
-                <div class="plan-badge">Starter</div>
-                <h3>Basic</h3>
-                <div class="plan-price">$29<span>/month</span></div>
-                <ul class="plan-features">
-                    <li><i class="fas fa-check"></i> 24/7 gym access</li>
-                    <li><i class="fas fa-check"></i> Cardio &amp; weights</li>
-                    <li><i class="fas fa-check"></i> Locker room access</li>
-                    <li><i class="fas fa-check"></i> Member app</li>
-                </ul>
-                <a href="login.html#register" class="btn btn-outline btn-full">Get Started</a>
+
+        <!-- Billing period toggle -->
+        <div style="display:flex;justify-content:center;margin-bottom:36px;">
+            <div class="ms-billing" role="tablist" aria-label="Billing period">
+                <button class="ms-billing-btn active" data-period="monthly" role="tab" aria-selected="true">Monthly</button>
+                <button class="ms-billing-btn" data-period="yearly" role="tab" aria-selected="false">
+                    Yearly <span class="ms-save-badge">Save 2 months</span>
+                </button>
             </div>
-            <div class="plan-card plan-featured">
-                <div class="plan-badge">Popular</div>
-                <h3>Premium</h3>
-                <div class="plan-price">$49<span>/month</span></div>
-                <ul class="plan-features">
-                    <li><i class="fas fa-check"></i> Everything in Basic</li>
-                    <li><i class="fas fa-check"></i> Group classes</li>
-                    <li><i class="fas fa-check"></i> Sauna &amp; steam room</li>
-                    <li><i class="fas fa-check"></i> Guest passes (2/mo)</li>
-                </ul>
-                <a href="login.html#register" class="btn btn-full">Get Started</a>
-            </div>
-            <div class="plan-card">
-                <div class="plan-badge">Elite</div>
-                <h3>VIP</h3>
-                <div class="plan-price">$99<span>/month</span></div>
-                <ul class="plan-features">
-                    <li><i class="fas fa-check"></i> Everything in Premium</li>
-                    <li><i class="fas fa-check"></i> Personal trainer</li>
-                    <li><i class="fas fa-check"></i> Nutrition plan</li>
-                    <li><i class="fas fa-check"></i> Priority booking</li>
-                </ul>
-                <a href="login.html#register" class="btn btn-outline btn-full">Get Started</a>
-            </div>
+        </div>
+
+        <!-- Plan cards rendered by js/index-plans.js -->
+        <div class="ms-grid" id="plansGrid"></div>
+
+        <p class="ms-note">
+            <i class="fas fa-shield-halved"></i>
+            Cancel any time. Prices in GBP (£). Tax calculated at checkout.
+        </p>
+
+        <div style="text-align:center;margin-top:24px;">
+            <a href="membership.html" class="btn btn-outline"><i class="fas fa-table-list"></i> Compare All Plans</a>
         </div>
     </div>
 </section>
@@ -424,7 +409,7 @@
         </div>
         <div class="footer-links">
             <a href="#home">Home</a>
-            <a href="#plans">Plans</a>
+            <a href="membership.html">Plans</a>
             <a href="#classes">Classes</a>
             <a href="#trainers">Trainers</a>
             <a href="#gallery">Gallery</a>
@@ -471,5 +456,6 @@
     });
 })();
 </script>
+<script type="module" src="js/index-plans.js"></script>
 </body>
 </html>
