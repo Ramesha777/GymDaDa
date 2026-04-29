@@ -9,6 +9,72 @@ var currentUid = null;
 var currentUser = null;
 var memberData = null;
 
+<<<<<<< Updated upstream
+=======
+/** Matches payment.js / checkout: active paid membership. */
+function isMemberPlanActive(d) {
+    if (!d || d.planStatus !== 'active' || !d.planId) return false;
+    if (!d.planExpiresAt || !d.planExpiresAt.toMillis) return true;
+    return d.planExpiresAt.toMillis() > Date.now();
+}
+
+/**
+ * Without membership: one active class booking at a time; after trainer starts session (completed), no more until they buy a plan.
+ */
+function evaluateClassBookingGate(memberDoc, bookingsSnap) {
+    if (isMemberPlanActive(memberDoc)) return { ok: true, reason: '', code: '' };
+
+    var completed = 0;
+    var confirmed = 0;
+    bookingsSnap.forEach(function(doc) {
+        var b = doc.data();
+        if ((b.status || '').trim() === 'cancelled') return;
+        if (b.sessionStarted === true) completed++;
+        if ((b.status || '').trim() === 'confirmed') confirmed++;
+    });
+    if (completed >= 1) {
+        return {
+            ok: false,
+            code: 'completed',
+            reason: 'You\'ve completed your complimentary session. Purchase a membership to book more classes.'
+        };
+    }
+    if (confirmed >= 1) {
+        return {
+            ok: false,
+            code: 'active_limit',
+            reason: 'Without a membership you can hold one active booking at a time. Cancel it or purchase a membership for unlimited bookings.'
+        };
+    }
+    return { ok: true, reason: '', code: '' };
+}
+
+var BOOKING_GATE_MODAL_COPY = {
+    completed: {
+        title: 'Complimentary session complete',
+        body: 'You have already completed your free session with us. To book more classes, choose a membership plan and enjoy full access to the schedule.'
+    },
+    active_limit: {
+        title: 'Membership or one booking',
+        body: 'Without a membership you can only have one active class booking at a time. Cancel your current booking if you want to switch classes, or purchase a membership to book as often as you like.'
+    }
+};
+
+function openBookingGateModal(code) {
+    var modalEl = $('bookingGateModal');
+    var titleEl = $('bookingGateModalTitle');
+    var bodyEl = $('bookingGateModalBody');
+    if (!modalEl || !titleEl || !bodyEl || !window.bootstrap) return;
+
+    var key = (code === 'active_limit') ? 'active_limit' : 'completed';
+    var copy = BOOKING_GATE_MODAL_COPY[key] || BOOKING_GATE_MODAL_COPY.completed;
+    titleEl.textContent = copy.title;
+    bodyEl.innerHTML = '<p class="mb-0 text-white-50">' + escapeHtml(copy.body) + '</p>';
+
+    bootstrap.Modal.getOrCreateInstance(modalEl).show();
+}
+
+>>>>>>> Stashed changes
 /* ═══════════════════════════════════════
    AUTH GATE
    ═══════════════════════════════════════ */
@@ -162,6 +228,7 @@ function loadClasses() {
                 ' at ' + (c.schedule && c.schedule.time ? c.schedule.time : '—');
             var dur = c.schedule && c.schedule.duration ? c.schedule.duration + ' min' : '';
 
+<<<<<<< Updated upstream
             var col = document.createElement('div');
             col.className = 'col-md-6 col-lg-4';
             col.innerHTML =
@@ -170,6 +237,118 @@ function loadClasses() {
                         '<div class="d-flex justify-content-between align-items-start mb-2">' +
                             '<h6 class="text-white fw-bold mb-0">' + (c.name || 'Untitled') + '</h6>' +
                             '<span class="badge bg-info">' + (c.type || 'General') + '</span>' +
+=======
+    var reqPromise = db.collection('memberClassRequests').where('memberId', '==', currentUid).get()
+        .catch(function(err) {
+            console.warn('memberClassRequests (trainer-request badges skipped):', err);
+            return null;
+        });
+
+    Promise.all([
+        db.collection('members').doc(currentUid).get(),
+        db.collection('classes').get(),
+        db.collection('bookings').where('memberId', '==', currentUid).get(),
+        reqPromise
+    ])
+        .then(function(parts) {
+            var mdoc = parts[0];
+            var classSnap = parts[1];
+            var bookSnap = parts[2];
+            var reqSnap = parts[3];
+
+            if (mdoc && mdoc.exists) memberData = mdoc.data();
+
+            if (reqSnap && typeof reqSnap.forEach === 'function') {
+                reqSnap.forEach(function(rd) {
+                    var x = rd.data();
+                    if (!x.classId) return;
+                    reqByClassId[x.classId] = x.status || 'pending';
+                });
+            }
+
+            var gate = evaluateClassBookingGate(memberData || {}, bookSnap);
+
+            grid.innerHTML = '';
+            var docs = [];
+            classSnap.forEach(function(doc) {
+                var c = doc.data();
+                var st = c.status || 'active';
+                if (st !== 'active') return;
+                docs.push(doc);
+            });
+            if (!docs.length) {
+                grid.innerHTML = '<div class="col-12 text-center text-muted py-4">No classes available yet</div>';
+                return;
+            }
+            docs.forEach(function(doc) {
+                var c = doc.data();
+                var spots = (c.capacity || 0) - (c.enrolled || 0);
+                var dayTxt = (c.schedule && c.schedule.day) ? c.schedule.day : '—';
+                var timeTxt = (c.schedule && c.schedule.time) ? c.schedule.time : '—';
+                var durTxt = (c.schedule && c.schedule.duration) ? String(c.schedule.duration) + ' min' : '';
+                var metaSchedule = escapeHtml(dayTxt) + ' · ' + escapeHtml(timeTxt) +
+                    (durTxt ? ' · ' + escapeHtml(durTxt) : '');
+                var trainerSpots = escapeHtml(c.trainerName || 'TBA') + ' · ' + spots + '/' + (c.capacity || 0);
+
+                var tid = (c.trainerId || '').trim();
+                var reqSt = reqByClassId[doc.id];
+                var askHtml = '';
+                if (tid) {
+                    if (reqSt === 'pending') {
+                        askHtml =
+                            '<div class="small text-warning mt-2"><i class="fas fa-clock me-1"></i>Trainer approval pending</div>';
+                    } else if (reqSt === 'approved') {
+                        askHtml =
+                            '<div class="small text-success mt-2"><i class="fas fa-check me-1"></i>Trainer approved</div>';
+                    } else if (reqSt === 'rejected') {
+                        askHtml =
+                            '<button type="button" class="btn btn-outline-warning btn-sm w-100 mt-2 member-ask-trainer-btn"' +
+                            ' data-class-id="' + escapeHtml(doc.id) + '"' +
+                            ' data-class-name="' + escapeHtml(c.name || '') + '"' +
+                            ' data-trainer-id="' + escapeHtml(tid) + '"' +
+                            ' data-trainer-name="' + escapeHtml(c.trainerName || '') + '">' +
+                            '<i class="fas fa-redo me-1"></i>Ask again</button>';
+                    } else {
+                        askHtml =
+                            '<button type="button" class="btn btn-outline-light btn-sm w-100 mt-2 member-ask-trainer-btn"' +
+                            ' data-class-id="' + escapeHtml(doc.id) + '"' +
+                            ' data-class-name="' + escapeHtml(c.name || '') + '"' +
+                            ' data-trainer-id="' + escapeHtml(tid) + '"' +
+                            ' data-trainer-name="' + escapeHtml(c.trainerName || '') + '">' +
+                            '<i class="fas fa-user-check me-1"></i>Ask trainer</button>';
+                    }
+                }
+
+                var bookRow = '';
+                if (spots <= 0) {
+                    bookRow = '<button type="button" class="btn btn-secondary btn-sm w-100 mt-2" disabled>Full</button>';
+                } else if (gate.ok) {
+                    bookRow =
+                        '<button type="button" class="btn btn-primary btn-sm w-100 mt-2" onclick="openBookModal(\'' +
+                        escapeJsString(doc.id) + '\',\'' + escapeJsString(c.name || '') + '\',\'' +
+                        escapeJsString(c.trainerName || '') + '\',\'' + escapeJsString(c.trainerId || '') + '\',\'' +
+                        escapeJsString((c.schedule && c.schedule.time) ? c.schedule.time : '') + '\',\'' +
+                        escapeJsString((c.schedule && c.schedule.day) ? String(c.schedule.day) : '') + '\')">Book Now</button>';
+                } else {
+                    var gCode = gate.code || 'completed';
+                    bookRow =
+                        '<button type="button" class="btn btn-primary btn-sm w-100 mt-2 btn-member-book-gated"' +
+                        ' data-gate-code="' + escapeHtml(gCode) + '">Book Now</button>';
+                }
+
+                var col = document.createElement('div');
+                col.className = 'col-6 col-sm-4 col-md-3 col-lg-2';
+                col.innerHTML =
+                    '<div class="dash-card h-100 class-card-member">' +
+                        '<div class="card-body text-center">' +
+                            '<div class="class-avatar"><i class="fas fa-dumbbell"></i></div>' +
+                            '<h6 class="text-white fw-bold mt-2 mb-1">' + escapeHtml(c.name || 'Untitled') + '</h6>' +
+                            '<span class="badge bg-info">' + escapeHtml(c.type || 'General') + '</span>' +
+                            '<div class="member-meta small mt-1">' + metaSchedule + '</div>' +
+                            '<div class="member-meta small">' + trainerSpots + '</div>' +
+                            askHtml +
+                            bookRow +
+>>>>>>> Stashed changes
                         '</div>' +
                         '<p class="text-muted small mb-2">' + (c.description || '') + '</p>' +
                         '<div class="small text-muted mb-2">' +
@@ -187,10 +366,54 @@ function loadClasses() {
                 '</div>';
             grid.appendChild(col);
         });
+<<<<<<< Updated upstream
     });
 }
 
 function escHtml(s) { return s.replace(/'/g, "\\'").replace(/"/g, '&quot;'); }
+=======
+}
+
+if ($('btnRefreshClasses')) {
+    $('btnRefreshClasses').addEventListener('click', loadClasses);
+}
+
+if ($('classesGrid')) {
+    $('classesGrid').addEventListener('click', function(e) {
+        var gatedBtn = e.target.closest('.btn-member-book-gated');
+        if (gatedBtn) {
+            e.preventDefault();
+            openBookingGateModal(gatedBtn.getAttribute('data-gate-code') || 'completed');
+            return;
+        }
+        var btn = e.target.closest('.member-ask-trainer-btn');
+        if (!btn || !btn.getAttribute('data-class-id')) return;
+        e.preventDefault();
+        submitMemberClassRequest(
+            btn.getAttribute('data-class-id'),
+            btn.getAttribute('data-class-name') || '',
+            btn.getAttribute('data-trainer-id') || '',
+            btn.getAttribute('data-trainer-name') || ''
+        );
+    });
+}
+
+if ($('btnBookingGateMembership')) {
+    $('btnBookingGateMembership').addEventListener('click', function() {
+        window.location.href = 'membership.html';
+    });
+}
+
+window.openBookModal = function(classId, className, trainerName, trainerId, time, scheduleDay) {
+    var hid = $('bookClassId');
+    if (!hid) return;
+    hid.value = classId;
+    hid.dataset.trainerId = trainerId || '';
+    hid.dataset.trainerName = trainerName || '';
+    hid.dataset.className = className || '';
+    hid.dataset.time = time || '';
+    hid.dataset.scheduleDay = scheduleDay || '';
+>>>>>>> Stashed changes
 
 $('btnRefreshClasses').addEventListener('click', loadClasses);
 

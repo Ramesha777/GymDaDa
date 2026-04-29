@@ -37,6 +37,7 @@
         <a href="#" data-section="bookings"><i class="fas fa-calendar-check"></i> My Bookings</a>
         <div class="nav-divider"></div>
         <div class="nav-label">Quick Links</div>
+        <a href="membership.html"><i class="fas fa-id-card"></i> Membership plans</a>
         <a href="index.html"><i class="fas fa-globe"></i> View Website</a>
     </nav>
     <div class="sidebar-footer">
@@ -167,6 +168,67 @@
     </div>
 </div>
 
+<<<<<<< Updated upstream
+=======
+<!-- Membership / booking gate (no active plan or guest trial exhausted) -->
+<div class="modal fade" id="bookingGateModal" tabindex="-1" aria-labelledby="bookingGateModalTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-secondary" style="background: var(--card-bg, #1a1d23); color: #fff;">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title" id="bookingGateModalTitle">—</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body" id="bookingGateModalBody"></div>
+            <div class="modal-footer border-secondary flex-wrap gap-2 justify-content-end">
+                <button type="button" class="btn btn-outline-light btn-sm" data-bs-dismiss="modal">Not now</button>
+                <button type="button" class="btn btn-primary btn-sm" id="btnBookingGateMembership"><i class="fas fa-id-card me-1"></i>Buy membership</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Booking confirmation (reference + QR) — logic in js/booking-confirmation.js -->
+<div class="modal fade" id="bookingConfirmModal" tabindex="-1" aria-labelledby="bookingConfirmTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content booking-confirm-modal">
+            <div class="modal-header border-0 pb-0">
+                <h5 class="modal-title" id="bookingConfirmTitle"><i class="fas fa-check-circle text-success me-2"></i>Booking confirmed</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body text-center pt-0 px-4">
+                <p class="text-muted small mb-3">Show this reference or QR code at check-in.</p>
+                <div class="booking-ref-display fw-bold text-white mb-1" id="bookingConfirmCode"></div>
+                <p class="small text-muted mb-4" id="bookingConfirmDetails"></p>
+                <div id="bookingQrHost" class="booking-qr-host d-inline-flex justify-content-center rounded-3 mb-2"></div>
+                <p class="small text-warning mb-0 d-none" id="bookingQrFallback" role="status"></p>
+            </div>
+            <div class="modal-footer border-0 justify-content-center pt-0 pb-4">
+                <button type="button" class="btn btn-primary px-4" data-bs-dismiss="modal">Done</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Booking cancelled — shown after successful cancel (see booking-confirmation.js) -->
+<div class="modal fade" id="bookingCancelledModal" tabindex="-1" aria-labelledby="bookingCancelledTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content booking-confirm-modal">
+            <div class="modal-header border-0 pb-0">
+                <h5 class="modal-title" id="bookingCancelledTitle"><i class="fas fa-check-circle text-info me-2"></i>Booking cancelled</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body text-center pt-0 px-4 pb-2">
+                <p class="text-white mb-2" id="bookingCancelledMessage">Your booking has been cancelled.</p>
+                <p class="text-muted small mb-0">You can book again anytime from Available Classes.</p>
+            </div>
+            <div class="modal-footer border-0 justify-content-center pt-0 pb-4">
+                <button type="button" class="btn btn-primary px-4" data-bs-dismiss="modal">OK</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+>>>>>>> Stashed changes
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
