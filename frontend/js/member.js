@@ -542,6 +542,11 @@ if ($('bookDate')) {
     $('bookDate').addEventListener('input', validateBookDateWeekday);
 }
 
+/** Compare stored booking times (strings); ignores extra whitespace. */
+function normalizeBookingTime(t) {
+    return String(t == null ? '' : t).trim().replace(/\s+/g, ' ');
+}
+
 $('btnConfirmBook').addEventListener('click', function() {
     var classId = $('bookClassId').value;
     var date = $('bookDate').value;
@@ -559,6 +564,7 @@ $('btnConfirmBook').addEventListener('click', function() {
     }
 
     var bookingCode = generateBookingCode();
+    var timeRaw = ds.time || '';
 
     var booking = {
         memberId: currentUid,
@@ -570,29 +576,51 @@ $('btnConfirmBook').addEventListener('click', function() {
         className: ds.className || '',
         scheduleDay: ds.scheduleDay || '',
         date: date,
-        time: ds.time || '',
+        time: timeRaw,
         bookingCode: bookingCode,
         status: 'confirmed',
         createdAt: firebase.firestore.FieldValue.serverTimestamp()
     };
 
-    db.collection('bookings').add(booking).then(function() {
-        if ($('bookModal') && bootstrap.Modal.getInstance($('bookModal'))) {
-            bootstrap.Modal.getInstance($('bookModal')).hide();
-        }
-        if (typeof window.showBookingConfirmation === 'function') {
-            window.showBookingConfirmation(bookingCode, {
-                className: ds.className || '',
-                date: date,
-                time: ds.time || ''
+    var wantTime = normalizeBookingTime(timeRaw);
+
+    db.collection('bookings').where('memberId', '==', currentUid).get()
+        .then(function(snap) {
+            var duplicate = false;
+            snap.forEach(function(doc) {
+                var b = doc.data();
+                if ((b.status || '') === 'cancelled') return;
+                if (b.classId !== classId || b.date !== date) return;
+                if (normalizeBookingTime(b.time) !== wantTime) return;
+                duplicate = true;
             });
-        } else {
-            alert('Booking confirmed. Your reference number is ' + bookingCode + '.');
-        }
-        loadClasses();
-        loadBookings();
-        switchSection('bookings');
-    }).catch(function(err) { alert(err.message); });
+            if (duplicate) {
+                alert('You already have an active booking for this class on this date at this time.');
+                return;
+            }
+            return db.collection('bookings').add(booking);
+        })
+        .then(function(addRef) {
+            if (!addRef) return;
+            if ($('bookModal') && bootstrap.Modal.getInstance($('bookModal'))) {
+                bootstrap.Modal.getInstance($('bookModal')).hide();
+            }
+            if (typeof window.showBookingConfirmation === 'function') {
+                window.showBookingConfirmation(bookingCode, {
+                    className: ds.className || '',
+                    date: date,
+                    time: timeRaw
+                });
+            } else {
+                alert('Booking confirmed. Your reference number is ' + bookingCode + '.');
+            }
+            loadClasses();
+            loadBookings();
+            switchSection('bookings');
+        })
+        .catch(function(err) {
+            if (err) alert(err.message || 'Booking failed.');
+        });
 });
 
 /* ═══════════════════════════════════════
