@@ -542,9 +542,46 @@ if ($('bookDate')) {
     $('bookDate').addEventListener('input', validateBookDateWeekday);
 }
 
-/** Compare stored booking times (strings); ignores extra whitespace. */
-function normalizeBookingTime(t) {
-    return String(t == null ? '' : t).trim().replace(/\s+/g, ' ');
+/** Canonical time string for duplicate checks (handles Firestore Timestamp / strings). */
+function bookingTimeComparable(t) {
+    if (t == null || t === '') return '';
+    if (typeof t === 'string' || typeof t === 'number') {
+        return String(t).trim().replace(/\s+/g, ' ');
+    }
+    if (typeof t === 'object') {
+        if (typeof t.toDate === 'function') {
+            try {
+                var d = t.toDate();
+                return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+            } catch (e) { /* ignore */ }
+        }
+        if (typeof t.seconds === 'number') {
+            try {
+                var d2 = new Date(t.seconds * 1000);
+                return String(d2.getHours()).padStart(2, '0') + ':' + String(d2.getMinutes()).padStart(2, '0');
+            } catch (e2) { /* ignore */ }
+        }
+    }
+    return String(t).trim().replace(/\s+/g, ' ');
+}
+
+/** One Firestore doc per member + class + date + time — prevents double-book races. */
+function bookingSlotDocId(memberId, classId, date, timeComparable) {
+    var t = (timeComparable || '').replace(/:/g, '-').replace(/\//g, '_');
+    if (!t) t = 'na';
+    return memberId + '_' + classId + '_' + date + '_' + t;
+}
+
+function duplicateBookingErr() {
+    var e = new Error('DUPLICATE_BOOKING');
+    e.code = 'DUPLICATE_BOOKING';
+    return e;
+}
+
+function classFullErr() {
+    var e = new Error('CLASS_FULL');
+    e.code = 'CLASS_FULL';
+    return e;
 }
 
 $('btnConfirmBook').addEventListener('click', function() {
@@ -565,6 +602,8 @@ $('btnConfirmBook').addEventListener('click', function() {
 
     var bookingCode = generateBookingCode();
     var timeRaw = ds.time || '';
+    var wantTime = bookingTimeComparable(timeRaw);
+    var slotId = bookingSlotDocId(currentUid, classId, date, wantTime);
 
     var booking = {
         memberId: currentUid,
@@ -577,12 +616,14 @@ $('btnConfirmBook').addEventListener('click', function() {
         scheduleDay: ds.scheduleDay || '',
         date: date,
         time: timeRaw,
+        slotKey: slotId,
         bookingCode: bookingCode,
         status: 'confirmed',
         createdAt: firebase.firestore.FieldValue.serverTimestamp()
     };
 
-    var wantTime = normalizeBookingTime(timeRaw);
+    var btnBook = $('btnConfirmBook');
+    btnBook.disabled = true;
 
     db.collection('bookings').where('memberId', '==', currentUid).get()
         .then(function(snap) {
@@ -591,17 +632,47 @@ $('btnConfirmBook').addEventListener('click', function() {
                 var b = doc.data();
                 if ((b.status || '') === 'cancelled') return;
                 if (b.classId !== classId || b.date !== date) return;
-                if (normalizeBookingTime(b.time) !== wantTime) return;
+                if (bookingTimeComparable(b.time) !== wantTime) return;
                 duplicate = true;
             });
-            if (duplicate) {
-                alert('You already have an active booking for this class on this date at this time.');
-                return;
-            }
-            return db.collection('bookings').add(booking);
+            if (duplicate) throw duplicateBookingErr();
+
+            return db.runTransaction(function(transaction) {
+                var ref = db.collection('bookings').doc(slotId);
+                var classRef = db.collection('classes').doc(classId);
+                return transaction.get(ref).then(function(docSnap) {
+                    if (docSnap.exists) {
+                        var st = docSnap.data().status || '';
+                        if (st !== 'cancelled') throw duplicateBookingErr();
+                    }
+                    return transaction.get(classRef).then(function(classSnap) {
+                        if (!classSnap.exists) {
+                            throw new Error('This class is no longer available.');
+                        }
+                        var cd = classSnap.data();
+                        var cap = cd.capacity != null ? cd.capacity : 0;
+                        var enr = cd.enrolled != null ? cd.enrolled : 0;
+                        if (cap > 0 && enr >= cap) throw classFullErr();
+
+                        transaction.set(ref, booking);
+                        transaction.update(classRef, {
+                            enrolled: firebase.firestore.FieldValue.increment(1)
+                        });
+                        var lookupRef = db.collection('bookingLookups').doc(String(bookingCode));
+                        transaction.set(lookupRef, {
+                            bookingId: slotId,
+                            memberId: currentUid,
+                            trainerId: ds.trainerId || '',
+                            trainerName: ds.trainerName || '',
+                            className: ds.className || '',
+                            date: date,
+                            time: timeRaw
+                        });
+                    });
+                });
+            });
         })
-        .then(function(addRef) {
-            if (!addRef) return;
+        .then(function() {
             if ($('bookModal') && bootstrap.Modal.getInstance($('bookModal'))) {
                 bootstrap.Modal.getInstance($('bookModal')).hide();
             }
@@ -619,7 +690,18 @@ $('btnConfirmBook').addEventListener('click', function() {
             switchSection('bookings');
         })
         .catch(function(err) {
+            if (err && err.code === 'DUPLICATE_BOOKING') {
+                alert('You already have an active booking for this class on this date at this time.');
+                return;
+            }
+            if (err && err.code === 'CLASS_FULL') {
+                alert('This class is full. Try another date or class.');
+                return;
+            }
             if (err) alert(err.message || 'Booking failed.');
+        })
+        .finally(function() {
+            btnBook.disabled = false;
         });
 });
 
@@ -1011,9 +1093,23 @@ function loadBookings() {
                     tr.setAttribute('aria-label', 'Show QR code for booking reference ' + codeRaw);
                 }
 
-                var cancelBtnHtml = b.status === 'confirmed'
-                    ? '<button type="button" class="btn btn-sm btn-outline-danger btn-cancel-booking" data-booking-id="' + escapeHtml(row.id) + '" data-booking-class="' + escapeHtml(b.className || '') + '"><i class="fas fa-times me-1"></i>Cancel</button>'
-                    : '—';
+                var actionsHtml = '—';
+                if (b.status === 'confirmed') {
+                    if (b.sessionStarted === true) {
+                        actionsHtml =
+                            '<span class="small text-success"><i class="fas fa-check-circle me-1"></i>Completed</span>';
+                    } else {
+                        actionsHtml =
+                            '<button type="button" class="btn btn-sm btn-outline-danger btn-cancel-booking" data-booking-id="' +
+                            escapeHtml(row.id) + '" data-booking-class="' + escapeHtml(b.className || '') +
+                            '"><i class="fas fa-times me-1"></i>Cancel</button>';
+                    }
+                } else if (b.status === 'cancelled') {
+                    actionsHtml =
+                        '<button type="button" class="btn btn-sm btn-outline-secondary btn-delete-cancelled-booking" data-booking-id="' +
+                        escapeHtml(row.id) + '" data-booking-class="' + escapeHtml(b.className || '') +
+                        '" title="Remove from your list"><i class="fas fa-trash-alt me-1"></i>Delete</button>';
+                }
 
                 tr.innerHTML =
                     '<td class="fw-semibold">' + refDisplay + '</td>' +
@@ -1022,7 +1118,7 @@ function loadBookings() {
                     '<td>' + escapeHtml(b.date || '—') + '</td>' +
                     '<td>' + escapeHtml(b.time || '—') + '</td>' +
                     '<td><span class="badge bg-' + (statusColors[b.status] || 'secondary') + '">' + escapeHtml(b.status || '—') + '</span></td>' +
-                    '<td>' + cancelBtnHtml + '</td>';
+                    '<td>' + actionsHtml + '</td>';
                 tbody.appendChild(tr);
             });
         })
@@ -1036,14 +1132,66 @@ window.cancelBooking = function(bookingId, meta) {
     meta = meta || {};
     if (!bookingId) return;
     if (!confirm('Cancel this booking?')) return;
-    db.collection('bookings').doc(bookingId).update({ status: 'cancelled' })
+
+    var bref = db.collection('bookings').doc(bookingId);
+
+    db.runTransaction(function(transaction) {
+        return transaction.get(bref).then(function(bsnap) {
+            if (!bsnap.exists) throw new Error('Booking not found.');
+            var b = bsnap.data();
+            if (b.memberId !== currentUid) throw new Error('Permission denied.');
+            if ((b.status || '') !== 'confirmed') throw new Error('This booking is already cancelled.');
+
+            var cid = (b.classId || '').trim();
+            if (!cid) {
+                transaction.update(bref, { status: 'cancelled' });
+                return;
+            }
+            var cref = db.collection('classes').doc(cid);
+            return transaction.get(cref).then(function(csnap) {
+                transaction.update(bref, { status: 'cancelled' });
+                if (csnap.exists) {
+                    var curEnr = csnap.data().enrolled != null ? csnap.data().enrolled : 0;
+                    if (curEnr > 0) {
+                        transaction.update(cref, {
+                            enrolled: firebase.firestore.FieldValue.increment(-1)
+                        });
+                    }
+                }
+            });
+        });
+    })
         .then(function() {
             loadBookings();
+            loadClasses();
             if (typeof window.showBookingCancelledConfirmation === 'function') {
                 window.showBookingCancelledConfirmation({ className: meta.className || '' });
             }
         })
         .catch(function(err) { alert(err.message || 'Could not cancel booking.'); });
+};
+
+window.deleteCancelledBooking = function(bookingId) {
+    if (!bookingId) return;
+    if (!confirm('Remove this cancelled booking from your list? This cannot be undone.')) return;
+
+    db.collection('bookings').doc(bookingId).get().then(function(doc) {
+        if (!doc.exists) throw new Error('Booking not found.');
+        var d = doc.data();
+        if (d.memberId !== currentUid) throw new Error('Permission denied.');
+        if ((d.status || '') !== 'cancelled') throw new Error('Only cancelled bookings can be removed.');
+        if (d.sessionStarted === true) throw new Error('This booking cannot be deleted after the session was started.');
+        var code = d.bookingCode;
+        var ops = [db.collection('bookings').doc(bookingId).delete()];
+        if (code != null && code !== '') {
+            ops.push(db.collection('bookingLookups').doc(String(code)).delete());
+        }
+        return Promise.all(ops);
+    })
+        .then(function() {
+            loadBookings();
+        })
+        .catch(function(err) { alert(err.message || 'Could not delete booking.'); });
 };
 
 $('btnRefreshBookings').addEventListener('click', loadBookings);
@@ -1053,6 +1201,13 @@ $('btnRefreshBookings').addEventListener('click', loadBookings);
     if (!tbody) return;
 
     tbody.addEventListener('click', function(e) {
+        var delBtn = e.target.closest('.btn-delete-cancelled-booking');
+        if (delBtn) {
+            e.stopPropagation();
+            var did = delBtn.getAttribute('data-booking-id');
+            if (did) window.deleteCancelledBooking(did);
+            return;
+        }
         var cancelBtn = e.target.closest('.btn-cancel-booking');
         if (cancelBtn) {
             e.stopPropagation();

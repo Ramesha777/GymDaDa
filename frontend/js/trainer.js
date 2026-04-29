@@ -16,6 +16,7 @@ var currentUser = null;
 var trainerData = {};
 var chatMsgUnsub = null;
 var trainerClassRequestByClassId = {};
+var trainerHtml5QrCode = null;
 
 function escHtml(s) {
     if (s == null || s === '') return '';
@@ -68,6 +69,7 @@ var titles = {
     classes: '<i class="fas fa-dumbbell me-2"></i>My Classes',
     members: '<i class="fas fa-users me-2"></i>My Members',
     schedule: '<i class="fas fa-calendar-alt me-2"></i>Schedule',
+    checkin: '<i class="fas fa-qrcode me-2"></i>Member Check-in',
     availability: '<i class="fas fa-clock me-2"></i>My Availability',
     chat: '<i class="fas fa-comments me-2"></i>Chat'
 };
@@ -89,6 +91,8 @@ function switchSection(name) {
     var sec = $('sec-' + name);
     if (sec) sec.classList.add('active');
     if ($('topbarTitle')) $('topbarTitle').innerHTML = titles[name] || name;
+
+    if (name !== 'checkin') stopTrainerQrScanner();
 
     if (name === 'members') loadMyMembers();
     if (name === 'classes') loadTrainerClasses();
@@ -959,4 +963,197 @@ if ($('chatInput')) {
     $('chatInput').addEventListener('keydown', function(e) {
         if (e.key === 'Enter') sendTrainerMessage();
     });
+}
+
+/* ═══ Member check-in (reference / QR) ═══ */
+
+function parseBookingRefFromScan(raw) {
+    var s = String(raw || '').trim();
+    if (s.indexOf('GymDD|') === 0) s = s.slice(6).trim();
+    return s;
+}
+
+function trainerCheckinCodeKey(refRaw) {
+    var s = parseBookingRefFromScan(refRaw);
+    var digits = s.replace(/\s/g, '');
+    if (/^\d+$/.test(digits)) return digits;
+    return s;
+}
+
+function stopTrainerQrScanner() {
+    if (!trainerHtml5QrCode) return;
+    var inst = trainerHtml5QrCode;
+    trainerHtml5QrCode = null;
+    inst.stop().then(function() {
+        inst.clear();
+    }).catch(function() {
+        try { inst.clear(); } catch (e) { /* ignore */ }
+    });
+}
+
+function trainerCheckinSetResult(html) {
+    var el = $('trainerCheckinResult');
+    if (el) el.innerHTML = html;
+}
+
+function trainerStartQrScanner() {
+    if (typeof Html5Qrcode === 'undefined') {
+        alert('QR scanner library did not load. Enter the reference number manually.');
+        return;
+    }
+    var hostId = 'trainerQrReader';
+    if (!$(hostId)) return;
+
+    stopTrainerQrScanner();
+    trainerHtml5QrCode = new Html5Qrcode(hostId);
+    trainerHtml5QrCode.start(
+        { facingMode: 'environment' },
+        { fps: 10, qrbox: { width: 220, height: 220 } },
+        function(decodedText) {
+            stopTrainerQrScanner();
+            trainerResolveBooking(decodedText);
+        },
+        function() { /* frame discard */ }
+    ).catch(function(err) {
+        trainerHtml5QrCode = null;
+        alert(err.message || 'Could not start camera. Check permissions.');
+    });
+}
+
+function trainerRenderOtherTrainerNotice(L) {
+    var tname = L.trainerName && String(L.trainerName).trim() ? L.trainerName : 'Another trainer';
+    var tim = L.time != null && String(L.time).trim() !== '' ? String(L.time) : '—';
+    trainerCheckinSetResult(
+        '<div class="alert alert-warning border-0 mb-0">' +
+            '<div class="fw-bold mb-2"><i class="fas fa-user-friends me-2"></i>This booking is not with you</div>' +
+            '<p class="small mb-1 text-white-50">Only the assigned trainer’s name and class time are shown.</p>' +
+            '<hr class="border-secondary">' +
+            '<div><span class="text-muted small text-uppercase">Trainer</span><div class="fw-semibold">' + escHtml(tname) + '</div></div>' +
+            '<div class="mt-2"><span class="text-muted small text-uppercase">Class time</span><div class="fw-semibold">' + escHtml(tim) + '</div></div>' +
+        '</div>'
+    );
+}
+
+function trainerRenderFullBooking(bookingId, b) {
+    var st = (b.status || '').trim();
+    var sessionOn = b.sessionStarted === true;
+    var refNum = b.bookingCode != null ? String(b.bookingCode) : '—';
+
+    var lines = [
+        '<div class="mb-2"><span class="text-muted small text-uppercase">Reference</span><div class="fw-bold fs-5">' + escHtml(refNum) + '</div></div>',
+        '<div class="mb-2"><span class="text-muted small text-uppercase">Member</span><div class="fw-semibold">' + escHtml(b.memberName || '—') + '</div>' +
+            '<div class="small text-muted">' + escHtml(b.memberEmail || '') + '</div></div>',
+        '<div class="mb-2"><span class="text-muted small text-uppercase">Class</span><div>' + escHtml(b.className || '—') + '</div></div>',
+        '<div class="mb-2"><span class="text-muted small text-uppercase">When</span><div>' + escHtml(b.date || '—') + ' · ' + escHtml(b.time || '—') + '</div></div>',
+        '<div class="mb-3"><span class="text-muted small text-uppercase">Status</span><div>' + escHtml(st || '—') +
+            (sessionOn ? ' <span class="badge bg-success ms-1">Session started</span>' : '') + '</div></div>'
+    ];
+
+    var actions = '';
+    if (st === 'confirmed' && !sessionOn) {
+        actions =
+            '<button type="button" class="btn btn-success w-100" id="btnTrainerStartSession" data-booking-id="' +
+            escHtml(bookingId) + '"><i class="fas fa-play-circle me-2"></i>Start session</button>' +
+            '<p class="small text-muted mt-2 mb-0">After you start the session, the member cannot cancel or remove this booking.</p>';
+    } else if (st === 'confirmed' && sessionOn) {
+        actions = '<div class="alert alert-success border-0 mb-0 py-2 small"><i class="fas fa-check me-1"></i>Session already started.</div>';
+    } else if (st === 'cancelled') {
+        actions = '<div class="alert alert-secondary border-0 mb-0 py-2 small">This booking was cancelled.</div>';
+    }
+
+    trainerCheckinSetResult(
+        '<div class="trainer-checkin-detail">' + lines.join('') + actions + '</div>'
+    );
+
+    var btn = $('btnTrainerStartSession');
+    if (btn) {
+        btn.addEventListener('click', function() {
+            var bid = btn.getAttribute('data-booking-id');
+            if (!bid) return;
+            if (!confirm('Start this session? The member will no longer be able to cancel or delete this booking.')) return;
+            db.collection('bookings').doc(bid).update({
+                sessionStarted: true,
+                sessionStartedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                sessionStartedBy: currentUid
+            }).then(function() {
+                return db.collection('bookings').doc(bid).get();
+            }).then(function(doc) {
+                if (doc.exists) trainerRenderFullBooking(bid, doc.data());
+            }).catch(function(err) {
+                alert(err.message || 'Could not start session.');
+            });
+        });
+    }
+}
+
+function trainerResolveBooking(refRaw) {
+    if (!currentUid) return;
+    var codeKey = trainerCheckinCodeKey(refRaw);
+    if (!codeKey) {
+        trainerCheckinSetResult('<p class="text-warning small mb-0">Enter or scan a valid reference.</p>');
+        return;
+    }
+
+    trainerCheckinSetResult('<p class="text-muted small mb-0"><i class="fas fa-spinner fa-spin me-2"></i>Looking up…</p>');
+
+    db.collection('bookingLookups').doc(codeKey).get()
+        .then(function(lsnap) {
+            if (lsnap.exists) {
+                var L = lsnap.data();
+                var tid = (L.trainerId || '').trim();
+                if (tid !== currentUid) {
+                    trainerRenderOtherTrainerNotice(L);
+                    return null;
+                }
+                return db.collection('bookings').doc(L.bookingId).get().then(function(bsnap) {
+                    if (!bsnap.exists) {
+                        trainerCheckinSetResult('<p class="text-danger small mb-0">Booking record missing. Ask admin.</p>');
+                        return;
+                    }
+                    trainerRenderFullBooking(bsnap.id, bsnap.data());
+                });
+            }
+            var num = parseInt(codeKey, 10);
+            if (isNaN(num)) {
+                trainerCheckinSetResult('<p class="text-warning small mb-0">No booking found for this reference.</p>');
+                return null;
+            }
+            return db.collection('bookings').where('bookingCode', '==', num).where('trainerId', '==', currentUid).limit(1).get()
+                .then(function(q) {
+                    if (q.empty) {
+                        trainerCheckinSetResult(
+                            '<p class="text-warning small mb-0">No booking found for this reference on your account. ' +
+                            'If this member trains with someone else, only their trainer name and time would appear.</p>'
+                        );
+                        return;
+                    }
+                    var doc = q.docs[0];
+                    trainerRenderFullBooking(doc.id, doc.data());
+                });
+        })
+        .catch(function(err) {
+            console.error(err);
+            trainerCheckinSetResult('<p class="text-danger small mb-0">' + escHtml(err.message || 'Lookup failed.') + '</p>');
+        });
+}
+
+if ($('btnTrainerLookupRef')) {
+    $('btnTrainerLookupRef').addEventListener('click', function() {
+        var inp = $('trainerBookingRefInput');
+        trainerResolveBooking(inp ? inp.value : '');
+    });
+}
+if ($('trainerBookingRefInput')) {
+    $('trainerBookingRefInput').addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            trainerResolveBooking(this.value);
+        }
+    });
+}
+if ($('btnTrainerScanStart')) {
+    $('btnTrainerScanStart').addEventListener('click', function() { trainerStartQrScanner(); });
+}
+if ($('btnTrainerScanStop')) {
+    $('btnTrainerScanStop').addEventListener('click', function() { stopTrainerQrScanner(); });
 }
