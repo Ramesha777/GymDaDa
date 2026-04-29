@@ -33,6 +33,8 @@ var currentMemberDetailId = null;
 var currentTrainerDetailId = null;
 var currentClassDetailId = null;
 
+var adminHtml5QrCode = null;
+
 /* ─── Helpers ─── */
 function escHtml(s) {
     if (s == null || s === '') return '';
@@ -163,6 +165,7 @@ var titles = {
     trainers: '<i class="fas fa-chalkboard-teacher me-2"></i>Trainer Applications',
     trainerAvail: '<i class="fas fa-calendar-check me-2"></i>Trainer Schedules',
     classes: '<i class="fas fa-dumbbell me-2"></i>Classes',
+    checkin: '<i class="fas fa-qrcode me-2"></i>Booking check-in',
     chat: '<i class="fas fa-comments me-2"></i>Chat'
 };
 
@@ -177,6 +180,7 @@ sidebarLinks.forEach(function(link) {
 });
 
 function switchSection(name) {
+    if (name !== 'checkin') stopAdminQrScanner();
     sidebarLinks.forEach(function(a) { a.classList.remove('active'); });
     sections.forEach(function(s) { s.classList.remove('active'); });
     var lnk = document.querySelector('.sidebar-nav a[data-section="' + name + '"]');
@@ -1410,4 +1414,163 @@ if ($('chatInput')) {
     $('chatInput').addEventListener('keydown', function(e) {
         if (e.key === 'Enter') sendAdminChatMessage();
     });
+}
+
+/* ═══ Admin booking check-in (QR / reference — same payload as trainer) ═══ */
+
+function parseAdminBookingRefFromScan(raw) {
+    var s = String(raw || '').trim();
+    if (s.indexOf('GymDD|') === 0) s = s.slice(6).trim();
+    return s;
+}
+
+function adminCheckinCodeKey(refRaw) {
+    var s = parseAdminBookingRefFromScan(refRaw);
+    var digits = s.replace(/\s/g, '');
+    if (/^\d+$/.test(digits)) return digits;
+    return s;
+}
+
+function stopAdminQrScanner() {
+    if (!adminHtml5QrCode) return;
+    var inst = adminHtml5QrCode;
+    adminHtml5QrCode = null;
+    inst.stop().then(function() {
+        inst.clear();
+    }).catch(function() {
+        try { inst.clear(); } catch (e) { /* ignore */ }
+    });
+}
+
+function adminCheckinSetResult(html) {
+    var el = $('adminCheckinResult');
+    if (el) el.innerHTML = html;
+}
+
+function adminStartQrScanner() {
+    if (typeof Html5Qrcode === 'undefined') {
+        alert('QR scanner library did not load. Enter the reference number manually.');
+        return;
+    }
+    var hostId = 'adminQrReader';
+    if (!$(hostId)) return;
+
+    stopAdminQrScanner();
+    adminHtml5QrCode = new Html5Qrcode(hostId);
+    adminHtml5QrCode.start(
+        { facingMode: 'environment' },
+        { fps: 10, qrbox: { width: 220, height: 220 } },
+        function(decodedText) {
+            stopAdminQrScanner();
+            adminResolveBooking(decodedText);
+        },
+        function() { /* frame discard */ }
+    ).catch(function(err) {
+        adminHtml5QrCode = null;
+        alert(err.message || 'Could not start camera. Check permissions.');
+    });
+}
+
+function adminRenderBookingDetail(bookingId, b) {
+    var st = (b.status || '').trim();
+    var sessionOn = b.sessionStarted === true;
+    var refNum = b.bookingCode != null ? String(b.bookingCode) : '—';
+
+    var summary =
+        '<div class="admin-checkin-highlight border border-secondary rounded p-3 mb-3 bg-dark bg-opacity-25">' +
+            '<div class="row g-2">' +
+                '<div class="col-sm-6">' +
+                    '<span class="text-muted small text-uppercase d-block">Class</span>' +
+                    '<div class="fw-bold">' + escHtml(b.className || '—') + '</div>' +
+                '</div>' +
+                '<div class="col-sm-6">' +
+                    '<span class="text-muted small text-uppercase d-block">Trainer</span>' +
+                    '<div class="fw-bold">' + escHtml(b.trainerName || '—') + '</div>' +
+                '</div>' +
+                '<div class="col-sm-6">' +
+                    '<span class="text-muted small text-uppercase d-block">Date</span>' +
+                    '<div class="fw-semibold">' + escHtml(b.date || '—') + '</div>' +
+                '</div>' +
+                '<div class="col-sm-6">' +
+                    '<span class="text-muted small text-uppercase d-block">Class time</span>' +
+                    '<div class="fw-semibold">' + escHtml(b.time || '—') + '</div>' +
+                '</div>' +
+            '</div>' +
+        '</div>';
+
+    var lines = [
+        '<div class="mb-2"><span class="text-muted small text-uppercase">Reference</span><div class="fw-bold fs-5">' + escHtml(refNum) + '</div></div>',
+        '<div class="mb-2"><span class="text-muted small text-uppercase">Member</span><div class="fw-semibold">' + escHtml(b.memberName || '—') + '</div>' +
+            '<div class="small text-muted">' + escHtml(b.memberEmail || '') + '</div></div>',
+        '<div class="mb-3"><span class="text-muted small text-uppercase">Status</span><div>' + escHtml(st || '—') +
+            (sessionOn ? ' <span class="badge bg-success ms-1">Session started</span>' : '') + '</div></div>'
+    ];
+
+    adminCheckinSetResult(
+        '<div class="admin-checkin-detail">' + summary + lines.join('') + '</div>'
+    );
+}
+
+function adminResolveBooking(refRaw) {
+    if (!currentUid) return;
+    var codeKey = adminCheckinCodeKey(refRaw);
+    if (!codeKey) {
+        adminCheckinSetResult('<p class="text-warning small mb-0">Enter or scan a valid reference.</p>');
+        return;
+    }
+
+    adminCheckinSetResult('<p class="text-muted small mb-0"><i class="fas fa-spinner fa-spin me-2"></i>Looking up…</p>');
+
+    db.collection('bookingLookups').doc(codeKey).get()
+        .then(function(lsnap) {
+            if (lsnap.exists) {
+                var L = lsnap.data();
+                return db.collection('bookings').doc(L.bookingId).get().then(function(bsnap) {
+                    if (!bsnap.exists) {
+                        adminCheckinSetResult('<p class="text-danger small mb-0">Booking record missing.</p>');
+                        return;
+                    }
+                    adminRenderBookingDetail(bsnap.id, bsnap.data());
+                });
+            }
+            var num = parseInt(codeKey, 10);
+            if (isNaN(num)) {
+                adminCheckinSetResult('<p class="text-warning small mb-0">No booking found for this reference.</p>');
+                return null;
+            }
+            return db.collection('bookings').where('bookingCode', '==', num).limit(1).get()
+                .then(function(q) {
+                    if (q.empty) {
+                        adminCheckinSetResult('<p class="text-warning small mb-0">No booking found for this reference.</p>');
+                        return;
+                    }
+                    var doc = q.docs[0];
+                    adminRenderBookingDetail(doc.id, doc.data());
+                });
+        })
+        .catch(function(err) {
+            console.error(err);
+            adminCheckinSetResult('<p class="text-danger small mb-0">' + escHtml(err.message || 'Lookup failed.') + '</p>');
+        });
+}
+
+if ($('btnAdminLookupRef')) {
+    $('btnAdminLookupRef').addEventListener('click', function() {
+        var inp = $('adminBookingRefInput');
+        adminResolveBooking(inp ? inp.value : '');
+    });
+}
+if ($('adminBookingRefInput')) {
+    $('adminBookingRefInput').addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            adminResolveBooking(this.value);
+        }
+    });
+}
+if ($('btnAdminScanStart')) {
+    $('btnAdminScanStart').addEventListener('click', function() { adminStartQrScanner(); });
+}
+if ($('btnAdminScanStop')) {
+    $('btnAdminScanStop').addEventListener('click', function() { stopAdminQrScanner(); });
 }

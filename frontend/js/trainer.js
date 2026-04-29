@@ -25,6 +25,13 @@ function escHtml(s) {
     return d.innerHTML;
 }
 
+/** Same logic as member checkout — used when bumping guest-session quota at check-in. */
+function trainerMemberPlanActive(d) {
+    if (!d || d.planStatus !== 'active' || !d.planId) return false;
+    if (!d.planExpiresAt || !d.planExpiresAt.toMillis) return true;
+    return d.planExpiresAt.toMillis() > Date.now();
+}
+
 function showDashboard(user) {
     $('loadingGate').style.display = 'none';
     $('mainContent').style.display = 'block';
@@ -1078,7 +1085,21 @@ function trainerRenderFullBooking(bookingId, b) {
             }).then(function() {
                 return db.collection('bookings').doc(bid).get();
             }).then(function(doc) {
-                if (doc.exists) trainerRenderFullBooking(bid, doc.data());
+                if (!doc.exists) return;
+                var b = doc.data();
+                trainerRenderFullBooking(bid, b);
+                var mid = b.memberId;
+                if (!mid) return;
+                return db.collection('members').doc(mid).get().then(function(mdoc) {
+                    var md = mdoc.exists ? mdoc.data() : {};
+                    if (trainerMemberPlanActive(md)) return null;
+                    var quotaRef = db.collection('members').doc(mid).collection('bookingQuota').doc('usage');
+                    return quotaRef.set({
+                        completedSessions: firebase.firestore.FieldValue.increment(1)
+                    }, { merge: true }).catch(function(e) {
+                        console.error('bookingQuota increment failed', e);
+                    });
+                });
             }).catch(function(err) {
                 alert(err.message || 'Could not start session.');
             });

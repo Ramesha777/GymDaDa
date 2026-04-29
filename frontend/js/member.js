@@ -9,6 +9,42 @@ var currentUid = null;
 var currentUser = null;
 var memberData = null;
 
+/** Matches payment.js / checkout: active paid membership. */
+function isMemberPlanActive(d) {
+    if (!d || d.planStatus !== 'active' || !d.planId) return false;
+    if (!d.planExpiresAt || !d.planExpiresAt.toMillis) return true;
+    return d.planExpiresAt.toMillis() > Date.now();
+}
+
+/**
+ * Without membership: one active class booking at a time; after trainer starts session (completed), no more until they buy a plan.
+ */
+function evaluateClassBookingGate(memberDoc, bookingsSnap) {
+    if (isMemberPlanActive(memberDoc)) return { ok: true, reason: '' };
+
+    var completed = 0;
+    var confirmed = 0;
+    bookingsSnap.forEach(function(doc) {
+        var b = doc.data();
+        if ((b.status || '').trim() === 'cancelled') return;
+        if (b.sessionStarted === true) completed++;
+        if ((b.status || '').trim() === 'confirmed') confirmed++;
+    });
+    if (completed >= 1) {
+        return {
+            ok: false,
+            reason: 'You\'ve completed your complimentary session. Purchase a membership to book more classes.'
+        };
+    }
+    if (confirmed >= 1) {
+        return {
+            ok: false,
+            reason: 'Without a membership you can hold one active booking at a time. Cancel it or purchase a membership for unlimited bookings.'
+        };
+    }
+    return { ok: true, reason: '' };
+}
+
 /* ═══════════════════════════════════════
    AUTH GATE
    ═══════════════════════════════════════ */
@@ -370,97 +406,125 @@ function loadClasses() {
 
     var reqByClassId = {};
 
-    db.collection('classes').get()
-        .then(function(classSnap) {
-            return db.collection('memberClassRequests').where('memberId', '==', currentUid).get()
-                .then(function(reqSnap) {
-                    reqSnap.forEach(function(rd) {
-                        var x = rd.data();
-                        if (!x.classId) return;
-                        reqByClassId[x.classId] = x.status || 'pending';
-                    });
-                    return classSnap;
-                })
-                .catch(function(err) {
-                    console.warn('memberClassRequests (trainer-request badges skipped):', err);
-                    return classSnap;
-                });
-        })
-        .then(function(snap) {
-
-        grid.innerHTML = '';
-        var docs = [];
-        snap.forEach(function(doc) {
-            var c = doc.data();
-            var st = c.status || 'active';
-            if (st !== 'active') return;
-            docs.push(doc);
+    var reqPromise = db.collection('memberClassRequests').where('memberId', '==', currentUid).get()
+        .catch(function(err) {
+            console.warn('memberClassRequests (trainer-request badges skipped):', err);
+            return null;
         });
-        if (!docs.length) {
-            grid.innerHTML = '<div class="col-12 text-center text-muted py-4">No classes available yet</div>';
-            return;
-        }
-        docs.forEach(function(doc) {
-            var c = doc.data();
-            var spots = (c.capacity || 0) - (c.enrolled || 0);
-            var dayTxt = (c.schedule && c.schedule.day) ? c.schedule.day : '—';
-            var timeTxt = (c.schedule && c.schedule.time) ? c.schedule.time : '—';
-            var durTxt = (c.schedule && c.schedule.duration) ? String(c.schedule.duration) + ' min' : '';
-            var metaSchedule = escapeHtml(dayTxt) + ' · ' + escapeHtml(timeTxt) +
-                (durTxt ? ' · ' + escapeHtml(durTxt) : '');
-            var trainerSpots = escapeHtml(c.trainerName || 'TBA') + ' · ' + spots + '/' + (c.capacity || 0);
 
-            var tid = (c.trainerId || '').trim();
-            var reqSt = reqByClassId[doc.id];
-            var askHtml = '';
-            if (tid) {
-                if (reqSt === 'pending') {
-                    askHtml =
-                        '<div class="small text-warning mt-2"><i class="fas fa-clock me-1"></i>Trainer approval pending</div>';
-                } else if (reqSt === 'approved') {
-                    askHtml =
-                        '<div class="small text-success mt-2"><i class="fas fa-check me-1"></i>Trainer approved</div>';
-                } else if (reqSt === 'rejected') {
-                    askHtml =
-                        '<button type="button" class="btn btn-outline-warning btn-sm w-100 mt-2 member-ask-trainer-btn"' +
-                        ' data-class-id="' + escapeHtml(doc.id) + '"' +
-                        ' data-class-name="' + escapeHtml(c.name || '') + '"' +
-                        ' data-trainer-id="' + escapeHtml(tid) + '"' +
-                        ' data-trainer-name="' + escapeHtml(c.trainerName || '') + '">' +
-                        '<i class="fas fa-redo me-1"></i>Ask again</button>';
-                } else {
-                    askHtml =
-                        '<button type="button" class="btn btn-outline-light btn-sm w-100 mt-2 member-ask-trainer-btn"' +
-                        ' data-class-id="' + escapeHtml(doc.id) + '"' +
-                        ' data-class-name="' + escapeHtml(c.name || '') + '"' +
-                        ' data-trainer-id="' + escapeHtml(tid) + '"' +
-                        ' data-trainer-name="' + escapeHtml(c.trainerName || '') + '">' +
-                        '<i class="fas fa-user-check me-1"></i>Ask trainer</button>';
-                }
+    Promise.all([
+        db.collection('members').doc(currentUid).get(),
+        db.collection('classes').get(),
+        db.collection('bookings').where('memberId', '==', currentUid).get(),
+        reqPromise
+    ])
+        .then(function(parts) {
+            var mdoc = parts[0];
+            var classSnap = parts[1];
+            var bookSnap = parts[2];
+            var reqSnap = parts[3];
+
+            if (mdoc && mdoc.exists) memberData = mdoc.data();
+
+            if (reqSnap && typeof reqSnap.forEach === 'function') {
+                reqSnap.forEach(function(rd) {
+                    var x = rd.data();
+                    if (!x.classId) return;
+                    reqByClassId[x.classId] = x.status || 'pending';
+                });
             }
 
-            var col = document.createElement('div');
-            col.className = 'col-6 col-sm-4 col-md-3 col-lg-2';
-            col.innerHTML =
-                '<div class="dash-card h-100 class-card-member">' +
-                    '<div class="card-body text-center">' +
-                        '<div class="class-avatar"><i class="fas fa-dumbbell"></i></div>' +
-                        '<h6 class="text-white fw-bold mt-2 mb-1">' + escapeHtml(c.name || 'Untitled') + '</h6>' +
-                        '<span class="badge bg-info">' + escapeHtml(c.type || 'General') + '</span>' +
-                        '<div class="member-meta small mt-1">' + metaSchedule + '</div>' +
-                        '<div class="member-meta small">' + trainerSpots + '</div>' +
-                        askHtml +
-                        (spots > 0
-                            ? '<button type="button" class="btn btn-primary btn-sm w-100 mt-2" onclick="openBookModal(\'' + escapeJsString(doc.id) + '\',\'' + escapeJsString(c.name || '') + '\',\'' + escapeJsString(c.trainerName || '') + '\',\'' + escapeJsString(c.trainerId || '') + '\',\'' + escapeJsString((c.schedule && c.schedule.time) ? c.schedule.time : '') + '\',\'' + escapeJsString((c.schedule && c.schedule.day) ? String(c.schedule.day) : '') + '\')">Book Now</button>'
-                            : '<button type="button" class="btn btn-secondary btn-sm w-100 mt-2" disabled>Full</button>') +
-                    '</div>' +
-                '</div>';
-            grid.appendChild(col);
+            var gate = evaluateClassBookingGate(memberData || {}, bookSnap);
+
+            grid.innerHTML = '';
+            var docs = [];
+            classSnap.forEach(function(doc) {
+                var c = doc.data();
+                var st = c.status || 'active';
+                if (st !== 'active') return;
+                docs.push(doc);
+            });
+            if (!docs.length) {
+                grid.innerHTML = '<div class="col-12 text-center text-muted py-4">No classes available yet</div>';
+                return;
+            }
+            docs.forEach(function(doc) {
+                var c = doc.data();
+                var spots = (c.capacity || 0) - (c.enrolled || 0);
+                var dayTxt = (c.schedule && c.schedule.day) ? c.schedule.day : '—';
+                var timeTxt = (c.schedule && c.schedule.time) ? c.schedule.time : '—';
+                var durTxt = (c.schedule && c.schedule.duration) ? String(c.schedule.duration) + ' min' : '';
+                var metaSchedule = escapeHtml(dayTxt) + ' · ' + escapeHtml(timeTxt) +
+                    (durTxt ? ' · ' + escapeHtml(durTxt) : '');
+                var trainerSpots = escapeHtml(c.trainerName || 'TBA') + ' · ' + spots + '/' + (c.capacity || 0);
+
+                var tid = (c.trainerId || '').trim();
+                var reqSt = reqByClassId[doc.id];
+                var askHtml = '';
+                if (tid) {
+                    if (reqSt === 'pending') {
+                        askHtml =
+                            '<div class="small text-warning mt-2"><i class="fas fa-clock me-1"></i>Trainer approval pending</div>';
+                    } else if (reqSt === 'approved') {
+                        askHtml =
+                            '<div class="small text-success mt-2"><i class="fas fa-check me-1"></i>Trainer approved</div>';
+                    } else if (reqSt === 'rejected') {
+                        askHtml =
+                            '<button type="button" class="btn btn-outline-warning btn-sm w-100 mt-2 member-ask-trainer-btn"' +
+                            ' data-class-id="' + escapeHtml(doc.id) + '"' +
+                            ' data-class-name="' + escapeHtml(c.name || '') + '"' +
+                            ' data-trainer-id="' + escapeHtml(tid) + '"' +
+                            ' data-trainer-name="' + escapeHtml(c.trainerName || '') + '">' +
+                            '<i class="fas fa-redo me-1"></i>Ask again</button>';
+                    } else {
+                        askHtml =
+                            '<button type="button" class="btn btn-outline-light btn-sm w-100 mt-2 member-ask-trainer-btn"' +
+                            ' data-class-id="' + escapeHtml(doc.id) + '"' +
+                            ' data-class-name="' + escapeHtml(c.name || '') + '"' +
+                            ' data-trainer-id="' + escapeHtml(tid) + '"' +
+                            ' data-trainer-name="' + escapeHtml(c.trainerName || '') + '">' +
+                            '<i class="fas fa-user-check me-1"></i>Ask trainer</button>';
+                    }
+                }
+
+                var bookRow = '';
+                if (spots <= 0) {
+                    bookRow = '<button type="button" class="btn btn-secondary btn-sm w-100 mt-2" disabled>Full</button>';
+                } else if (gate.ok) {
+                    bookRow =
+                        '<button type="button" class="btn btn-primary btn-sm w-100 mt-2" onclick="openBookModal(\'' +
+                        escapeJsString(doc.id) + '\',\'' + escapeJsString(c.name || '') + '\',\'' +
+                        escapeJsString(c.trainerName || '') + '\',\'' + escapeJsString(c.trainerId || '') + '\',\'' +
+                        escapeJsString((c.schedule && c.schedule.time) ? c.schedule.time : '') + '\',\'' +
+                        escapeJsString((c.schedule && c.schedule.day) ? String(c.schedule.day) : '') + '\')">Book Now</button>';
+                } else {
+                    bookRow =
+                        '<button type="button" class="btn btn-secondary btn-sm w-100 mt-2" disabled title="' +
+                        escapeHtml(gate.reason).replace(/"/g, '&quot;') + '">Book Now</button>' +
+                        '<div class="small text-warning mt-2">' + escapeHtml(gate.reason) + '</div>';
+                }
+
+                var col = document.createElement('div');
+                col.className = 'col-6 col-sm-4 col-md-3 col-lg-2';
+                col.innerHTML =
+                    '<div class="dash-card h-100 class-card-member">' +
+                        '<div class="card-body text-center">' +
+                            '<div class="class-avatar"><i class="fas fa-dumbbell"></i></div>' +
+                            '<h6 class="text-white fw-bold mt-2 mb-1">' + escapeHtml(c.name || 'Untitled') + '</h6>' +
+                            '<span class="badge bg-info">' + escapeHtml(c.type || 'General') + '</span>' +
+                            '<div class="member-meta small mt-1">' + metaSchedule + '</div>' +
+                            '<div class="member-meta small">' + trainerSpots + '</div>' +
+                            askHtml +
+                            bookRow +
+                        '</div>' +
+                    '</div>';
+                grid.appendChild(col);
+            });
+        })
+        .catch(function(err) {
+            console.error('classes:', err);
+            grid.innerHTML = '<div class="col-12 text-center text-danger py-4">Could not load classes.</div>';
         });
-        }).catch(function(err) {
-        console.error('classes:', err);
-        grid.innerHTML = '<div class="col-12 text-center text-danger py-4">Could not load classes.</div>';
-    });
 }
 
 if ($('btnRefreshClasses')) {
@@ -584,6 +648,12 @@ function classFullErr() {
     return e;
 }
 
+function guestBookingGateErr() {
+    var e = new Error('BOOKING_GATE');
+    e.code = 'BOOKING_GATE';
+    return e;
+}
+
 $('btnConfirmBook').addEventListener('click', function() {
     var classId = $('bookClassId').value;
     var date = $('bookDate').value;
@@ -605,28 +675,24 @@ $('btnConfirmBook').addEventListener('click', function() {
     var wantTime = bookingTimeComparable(timeRaw);
     var slotId = bookingSlotDocId(currentUid, classId, date, wantTime);
 
-    var booking = {
-        memberId: currentUid,
-        memberName: memberData.displayName || currentUser.email,
-        memberEmail: currentUser.email,
-        trainerId: ds.trainerId || '',
-        trainerName: ds.trainerName || '',
-        classId: classId,
-        className: ds.className || '',
-        scheduleDay: ds.scheduleDay || '',
-        date: date,
-        time: timeRaw,
-        slotKey: slotId,
-        bookingCode: bookingCode,
-        status: 'confirmed',
-        createdAt: firebase.firestore.FieldValue.serverTimestamp()
-    };
-
     var btnBook = $('btnConfirmBook');
     btnBook.disabled = true;
 
-    db.collection('bookings').where('memberId', '==', currentUid).get()
-        .then(function(snap) {
+    Promise.all([
+        db.collection('members').doc(currentUid).get(),
+        db.collection('bookings').where('memberId', '==', currentUid).get()
+    ])
+        .then(function(parts) {
+            var mdoc = parts[0];
+            var snap = parts[1];
+            memberData = mdoc.exists ? mdoc.data() : {};
+
+            var gate = evaluateClassBookingGate(memberData, snap);
+            if (!gate.ok) {
+                alert(gate.reason);
+                throw guestBookingGateErr();
+            }
+
             var duplicate = false;
             snap.forEach(function(doc) {
                 var b = doc.data();
@@ -636,6 +702,25 @@ $('btnConfirmBook').addEventListener('click', function() {
                 duplicate = true;
             });
             if (duplicate) throw duplicateBookingErr();
+
+            var planActive = isMemberPlanActive(memberData);
+            var booking = {
+                memberId: currentUid,
+                memberName: memberData.displayName || currentUser.email,
+                memberEmail: currentUser.email,
+                trainerId: ds.trainerId || '',
+                trainerName: ds.trainerName || '',
+                classId: classId,
+                className: ds.className || '',
+                scheduleDay: ds.scheduleDay || '',
+                date: date,
+                time: timeRaw,
+                slotKey: slotId,
+                bookingCode: bookingCode,
+                status: 'confirmed',
+                guestTrialBooking: !planActive,
+                createdAt: firebase.firestore.FieldValue.serverTimestamp()
+            };
 
             return db.runTransaction(function(transaction) {
                 var ref = db.collection('bookings').doc(slotId);
@@ -690,6 +775,7 @@ $('btnConfirmBook').addEventListener('click', function() {
             switchSection('bookings');
         })
         .catch(function(err) {
+            if (err && err.code === 'BOOKING_GATE') return;
             if (err && err.code === 'DUPLICATE_BOOKING') {
                 alert('You already have an active booking for this class on this date at this time.');
                 return;
