@@ -88,6 +88,7 @@ function switchSection(name) {
     if ($('topbarTitle')) $('topbarTitle').innerHTML = titles[name] || name;
 
     if (name === 'members') loadMyMembers();
+    if (name === 'availability') loadAvailability();
     if (name === 'chat') openTrainerAdminChat();
 }
 
@@ -106,6 +107,35 @@ function closeSidebar() {
 if ($('sidebarClose')) $('sidebarClose').addEventListener('click', closeSidebar);
 if (overlay) overlay.addEventListener('click', closeSidebar);
 
+function getInitials(name, fallback) {
+    var src = (name && String(name).trim()) || fallback || '';
+    if (!src) return '?';
+    return src.split(/\s+/).map(function(w) { return w[0]; }).join('').substring(0, 2).toUpperCase();
+}
+
+function renderTrainerAvatar(name, email, photoURL) {
+    var box = $('trainerAvatar');
+    var initEl = $('trainerAvatarInitials');
+    if (!box || !initEl) return;
+    var initials = getInitials(name, email);
+    initEl.textContent = initials;
+    var existing = box.querySelector('img');
+    if (existing) existing.remove();
+    if (photoURL && /^https?:\/\//i.test(photoURL)) {
+        var img = document.createElement('img');
+        img.alt = name || 'Profile photo';
+        img.src = photoURL;
+        initEl.style.display = 'none';
+        img.onerror = function() {
+            img.remove();
+            initEl.style.display = '';
+        };
+        box.appendChild(img);
+    } else {
+        initEl.style.display = '';
+    }
+}
+
 function loadTrainerProfile(uid) {
     db.collection('trainers').doc(uid).get()
         .then(function(doc) {
@@ -119,6 +149,17 @@ function loadTrainerProfile(uid) {
             if ($('tProfExp')) $('tProfExp').value = d.experience != null ? d.experience : '';
             if ($('tProfQual')) $('tProfQual').value = d.qualifications || '';
             if ($('tProfBio')) $('tProfBio').value = d.bio || '';
+            if ($('tProfPhotoURL')) $('tProfPhotoURL').value = d.photoURL || '';
+
+            if ($('trainerHeroName')) $('trainerHeroName').textContent = d.displayName || 'Trainer';
+            if ($('trainerHeroEmail')) {
+                $('trainerHeroEmail').textContent = d.email || (currentUser && currentUser.email) || '';
+            }
+            renderTrainerAvatar(
+                d.displayName,
+                d.email || (currentUser && currentUser.email) || '',
+                d.photoURL
+            );
 
             var status = d.approvalStatus || 'pending';
             var colors = { approved: 'success', pending: 'warning', rejected: 'danger' };
@@ -128,6 +169,17 @@ function loadTrainerProfile(uid) {
                     status.charAt(0).toUpperCase() + status.slice(1) + '</span>';
             }
         });
+}
+
+var trainerPhotoInput = $('tProfPhotoURL');
+if (trainerPhotoInput) {
+    trainerPhotoInput.addEventListener('input', function() {
+        renderTrainerAvatar(
+            ($('tProfName') && $('tProfName').value) || (trainerData && trainerData.displayName),
+            (currentUser && currentUser.email) || '',
+            trainerPhotoInput.value.trim()
+        );
+    });
 }
 
 var trainerForm = $('trainerProfileForm');
@@ -140,7 +192,8 @@ if (trainerForm) {
             phone: $('tProfPhone').value.trim(),
             experience: parseInt($('tProfExp').value, 10) || 0,
             qualifications: $('tProfQual').value.trim(),
-            bio: $('tProfBio').value.trim()
+            bio: $('tProfBio').value.trim(),
+            photoURL: ($('tProfPhotoURL') ? $('tProfPhotoURL').value.trim() : '')
         };
 
         db.collection('trainers').doc(currentUid).update(data)
@@ -162,6 +215,227 @@ if (trainerForm) {
                 }
             });
     });
+}
+
+/* ═══════════════════════════════════════
+   AVAILABILITY (weekly schedule editor)
+   ═══════════════════════════════════════ */
+var DAYS_OF_WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+var availabilityState = {};
+
+function defaultAvailability() {
+    var out = {};
+    DAYS_OF_WEEK.forEach(function(day) {
+        out[day] = { available: false, slots: [] };
+    });
+    return out;
+}
+
+function normalizeAvailability(raw) {
+    var base = defaultAvailability();
+    if (!raw || typeof raw !== 'object') return base;
+    DAYS_OF_WEEK.forEach(function(day) {
+        var src = raw[day];
+        if (src == null) src = raw[day.toLowerCase()];
+        if (src == null) return;
+
+        if (typeof src === 'string') {
+            base[day] = { available: true, slots: [{ start: src, end: '' }] };
+            return;
+        }
+        if (typeof src !== 'object') return;
+
+        var enabled = src.available !== false;
+        var slots = [];
+        var rawSlots = Array.isArray(src.slots) ? src.slots
+            : Array.isArray(src.times) ? src.times
+            : null;
+        if (rawSlots) {
+            rawSlots.forEach(function(s) {
+                if (s == null) return;
+                if (typeof s === 'string') {
+                    slots.push({ start: s, end: '' });
+                    return;
+                }
+                if (typeof s === 'object') {
+                    var st = s.start != null ? s.start : s.from != null ? s.from : '';
+                    var en = s.end != null ? s.end : s.to != null ? s.to : '';
+                    slots.push({ start: String(st || ''), end: String(en || '') });
+                }
+            });
+        }
+        if (enabled && !slots.length) slots.push({ start: '09:00', end: '17:00' });
+        base[day] = { available: enabled, slots: slots };
+    });
+    return base;
+}
+
+function showAvailAlert(msg, type) {
+    var el = $('availAlert');
+    if (!el) return;
+    el.className = 'alert alert-' + type;
+    el.textContent = msg;
+    el.classList.remove('d-none');
+    setTimeout(function() { el.classList.add('d-none'); }, 4000);
+}
+
+function buildSlotRow(day, idx, slot) {
+    var row = document.createElement('div');
+    row.className = 'avail-slot';
+    row.dataset.day = day;
+    row.dataset.idx = String(idx);
+    row.innerHTML =
+        '<input type="time" class="form-control form-control-sm avail-start" value="' + (slot.start || '') + '">' +
+        '<span class="avail-to">to</span>' +
+        '<input type="time" class="form-control form-control-sm avail-end" value="' + (slot.end || '') + '">' +
+        '<button type="button" class="btn btn-sm btn-outline-danger avail-remove-slot" title="Remove">' +
+            '<i class="fas fa-xmark"></i>' +
+        '</button>';
+
+    row.querySelector('.avail-start').addEventListener('input', function(e) {
+        availabilityState[day].slots[idx].start = e.target.value;
+    });
+    row.querySelector('.avail-end').addEventListener('input', function(e) {
+        availabilityState[day].slots[idx].end = e.target.value;
+    });
+    row.querySelector('.avail-remove-slot').addEventListener('click', function() {
+        availabilityState[day].slots.splice(idx, 1);
+        if (!availabilityState[day].slots.length) {
+            availabilityState[day].slots.push({ start: '09:00', end: '17:00' });
+        }
+        renderAvailabilityGrid();
+    });
+    return row;
+}
+
+function buildDayRow(day) {
+    var data = availabilityState[day];
+    var row = document.createElement('div');
+    row.className = 'avail-row';
+
+    var toggleId = 'availToggle-' + day;
+    var toggle = document.createElement('label');
+    toggle.className = 'avail-day-toggle';
+    toggle.htmlFor = toggleId;
+    toggle.innerHTML =
+        '<input type="checkbox" class="form-check-input" id="' + toggleId + '"' + (data.available ? ' checked' : '') + '>' +
+        '<span class="avail-day-name">' + day + '</span>';
+    toggle.querySelector('input').addEventListener('change', function(e) {
+        availabilityState[day].available = e.target.checked;
+        if (e.target.checked && !availabilityState[day].slots.length) {
+            availabilityState[day].slots.push({ start: '09:00', end: '17:00' });
+        }
+        renderAvailabilityGrid();
+    });
+
+    var times = document.createElement('div');
+    times.className = 'avail-times' + (data.available ? '' : ' disabled');
+
+    if (!data.slots.length) {
+        var hint = document.createElement('div');
+        hint.className = 'text-muted small';
+        hint.textContent = data.available ? 'Add a time slot below.' : 'Off — toggle to set hours.';
+        times.appendChild(hint);
+    } else {
+        data.slots.forEach(function(slot, idx) {
+            times.appendChild(buildSlotRow(day, idx, slot));
+        });
+    }
+
+    var addBtn = document.createElement('button');
+    addBtn.type = 'button';
+    addBtn.className = 'btn btn-sm btn-outline-primary avail-add-slot mt-1';
+    addBtn.title = 'Add time slot';
+    addBtn.innerHTML = '<i class="fas fa-plus me-1"></i>Add slot';
+    addBtn.addEventListener('click', function() {
+        availabilityState[day].slots.push({ start: '09:00', end: '17:00' });
+        if (!availabilityState[day].available) availabilityState[day].available = true;
+        renderAvailabilityGrid();
+    });
+    times.appendChild(addBtn);
+
+    row.appendChild(toggle);
+    row.appendChild(times);
+    return row;
+}
+
+function renderAvailabilityGrid() {
+    var grid = $('availGrid');
+    if (!grid) return;
+    grid.innerHTML = '';
+    DAYS_OF_WEEK.forEach(function(day) {
+        grid.appendChild(buildDayRow(day));
+    });
+}
+
+function loadAvailability() {
+    var grid = $('availGrid');
+    if (!grid) return;
+    grid.innerHTML = '<div class="text-center text-muted py-4"><i class="fas fa-spinner fa-spin me-2"></i>Loading availability…</div>';
+
+    var promise = currentUid
+        ? db.collection('trainers').doc(currentUid).get()
+        : Promise.resolve(null);
+
+    promise.then(function(doc) {
+        var raw = (doc && doc.exists) ? (doc.data().availability || doc.data().weeklyAvailability) : null;
+        availabilityState = normalizeAvailability(raw);
+        renderAvailabilityGrid();
+    }).catch(function() {
+        availabilityState = defaultAvailability();
+        renderAvailabilityGrid();
+        showAvailAlert('Could not load saved availability — starting fresh.', 'warning');
+    });
+}
+
+function saveAvailability() {
+    if (!currentUid) return;
+    var payload = {};
+    var hasInvalid = false;
+
+    DAYS_OF_WEEK.forEach(function(day) {
+        var d = availabilityState[day];
+        var enabled = !!d.available;
+        var cleanSlots = [];
+        if (enabled) {
+            d.slots.forEach(function(s) {
+                var st = (s.start || '').trim();
+                var en = (s.end || '').trim();
+                if (!st && !en) return;
+                if (st && en && st >= en) hasInvalid = true;
+                cleanSlots.push({ start: st, end: en });
+            });
+        }
+        payload[day] = { available: enabled && cleanSlots.length > 0, slots: cleanSlots };
+    });
+
+    if (hasInvalid) {
+        showAvailAlert('Each slot needs a start time earlier than its end time.', 'danger');
+        return;
+    }
+
+    var btn = $('btnSaveAvail');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Saving…'; }
+
+    db.collection('trainers').doc(currentUid).set({ availability: payload }, { merge: true })
+        .then(function() {
+            showAvailAlert('Availability saved!', 'success');
+            availabilityState = normalizeAvailability(payload);
+            renderAvailabilityGrid();
+        })
+        .catch(function(err) {
+            showAvailAlert(err.message || 'Failed to save availability.', 'danger');
+        })
+        .then(function() {
+            if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-save me-2"></i>Save Availability'; }
+        });
+}
+
+if ($('btnSaveAvail')) {
+    $('btnSaveAvail').addEventListener('click', saveAvailability);
+}
+if ($('btnRefreshAvail')) {
+    $('btnRefreshAvail').addEventListener('click', loadAvailability);
 }
 
 /* ─── Members (from bookings) ─── */

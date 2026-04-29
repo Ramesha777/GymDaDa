@@ -65,9 +65,18 @@
                     <div class="dash-card">
                         <div class="card-header">
                             <span>Profile Details</span>
-                            <div id="profileStatus"></div>
                         </div>
                         <div class="card-body">
+                            <div class="profile-hero">
+                                <div class="profile-avatar-lg" id="profileAvatar">
+                                    <span id="profileAvatarInitials">?</span>
+                                </div>
+                                <div class="profile-hero-info">
+                                    <div class="profile-hero-name" id="profileHeroName">—</div>
+                                    <div class="profile-hero-email" id="profileHeroEmail">—</div>
+                                </div>
+                            </div>
+
                             <div id="profileAlert" class="alert d-none" role="alert"></div>
                             <form id="profileForm">
                                 <div class="row g-3">
@@ -78,6 +87,11 @@
                                     <div class="col-md-6">
                                         <label class="form-label">Phone</label>
                                         <input type="tel" class="form-control" id="profPhone" required>
+                                    </div>
+                                    <div class="col-12">
+                                        <label class="form-label">Profile Image URL</label>
+                                        <input type="url" class="form-control" id="profPhotoURL" placeholder="https://example.com/me.jpg">
+                                        <small class="text-muted">Paste a direct link to an image. Leave empty to use your initials.</small>
                                     </div>
                                     <div class="col-12">
                                         <label class="form-label">Address</label>

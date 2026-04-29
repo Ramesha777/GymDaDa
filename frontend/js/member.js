@@ -89,12 +89,44 @@ overlay.addEventListener('click', closeSidebar);
 /* ═══════════════════════════════════════
    PROFILE
    ═══════════════════════════════════════ */
+function getInitials(name, fallback) {
+    var src = (name && String(name).trim()) || fallback || '';
+    if (!src) return '?';
+    return src.split(/\s+/).map(function(w) { return w[0]; }).join('').substring(0, 2).toUpperCase();
+}
+
+function renderProfileAvatar(name, email, photoURL) {
+    var box = $('profileAvatar');
+    var initEl = $('profileAvatarInitials');
+    if (!box || !initEl) return;
+    var initials = getInitials(name, email);
+    initEl.textContent = initials;
+    var existing = box.querySelector('img');
+    if (existing) existing.remove();
+    if (photoURL && /^https?:\/\//i.test(photoURL)) {
+        var img = document.createElement('img');
+        img.alt = name || 'Profile photo';
+        img.src = photoURL;
+        initEl.style.display = 'none';
+        img.onerror = function() {
+            img.remove();
+            initEl.style.display = '';
+        };
+        box.appendChild(img);
+    } else {
+        initEl.style.display = '';
+    }
+}
+
 function loadProfile() {
     if (!currentUid) return;
     db.collection('members').doc(currentUid).get().then(function(doc) {
         if (!doc.exists) {
-            $('profileStatus').innerHTML = '<span class="badge bg-secondary">New — fill in your details</span>';
+            if ($('profileStatus')) $('profileStatus').innerHTML = '';
             $('profEmail').value = currentUser.email;
+            if ($('profileHeroEmail')) $('profileHeroEmail').textContent = currentUser.email;
+            if ($('profileHeroName')) $('profileHeroName').textContent = 'New member';
+            renderProfileAvatar('', currentUser.email, '');
             return;
         }
         var d = doc.data();
@@ -103,12 +135,24 @@ function loadProfile() {
         $('profEmail').value   = d.email || currentUser.email;
         $('profPhone').value   = d.phone || '';
         $('profAddress').value = d.address || '';
-        $('profPlan').textContent = d.plan || '—';
-        var status = d.approvalStatus || 'pending';
-        var colors = { approved: 'success', pending: 'warning', rejected: 'danger' };
-        $('profileStatus').innerHTML =
-            '<span class="badge bg-' + (colors[status] || 'secondary') + '">' +
-            status.charAt(0).toUpperCase() + status.slice(1) + '</span>';
+        if ($('profPhotoURL')) $('profPhotoURL').value = d.photoURL || '';
+
+        if ($('profileHeroName')) $('profileHeroName').textContent = d.displayName || 'Member';
+        if ($('profileHeroEmail')) $('profileHeroEmail').textContent = d.email || currentUser.email || '';
+        renderProfileAvatar(d.displayName, d.email || currentUser.email, d.photoURL);
+
+        var planLabel = d.plan || '—';
+        if (d.planPeriod) planLabel += ' (' + (d.planPeriod === 'yearly' ? 'Yearly' : 'Monthly') + ')';
+        var planBadge = '';
+        if (d.planStatus === 'active') {
+            planBadge = ' <span class="badge bg-success ms-2">Active</span>';
+        } else if (d.planStatus === 'expired') {
+            planBadge = ' <span class="badge bg-secondary ms-2">Expired</span>';
+        } else if (d.planId) {
+            planBadge = ' <span class="badge bg-warning ms-2">Inactive</span>';
+        }
+        $('profPlan').innerHTML = planLabel + planBadge;
+        if ($('profileStatus')) $('profileStatus').innerHTML = '';
     });
 }
 
@@ -118,13 +162,13 @@ $('profileForm').addEventListener('submit', function(e) {
         displayName: $('profName').value.trim(),
         email: currentUser.email,
         phone: $('profPhone').value.trim(),
-        address: $('profAddress').value.trim()
+        address: $('profAddress').value.trim(),
+        photoURL: ($('profPhotoURL') ? $('profPhotoURL').value.trim() : '')
     };
     db.collection('members').doc(currentUid).get().then(function(doc) {
         if (doc.exists) {
             return db.collection('members').doc(currentUid).update(data);
         } else {
-            data.approvalStatus = 'pending';
             data.plan = 'Basic';
             data.createdAt = firebase.firestore.FieldValue.serverTimestamp();
             return db.collection('members').doc(currentUid).set(data);
@@ -134,6 +178,17 @@ $('profileForm').addEventListener('submit', function(e) {
         loadProfile();
     }).catch(function(err) { showAlert($('profileAlert'), err.message, 'danger'); });
 });
+
+var photoInput = $('profPhotoURL');
+if (photoInput) {
+    photoInput.addEventListener('input', function() {
+        renderProfileAvatar(
+            $('profName').value || (memberData && memberData.displayName),
+            currentUser ? currentUser.email : '',
+            photoInput.value.trim()
+        );
+    });
+}
 
 function showAlert(el, msg, type) {
     el.className = 'alert alert-' + type;
@@ -251,6 +306,10 @@ function loadTrainers() {
             var t = doc.data();
             var label = (t.displayName || t.email || 'Trainer').trim();
             var initials = (label || 'T').split(' ').map(function(w) { return w[0]; }).join('').substring(0, 2).toUpperCase();
+            var hasPhoto = t.photoURL && /^https?:\/\//i.test(t.photoURL);
+            var avatar = hasPhoto
+                ? '<div class="trainer-avatar"><img src="' + escHtml(t.photoURL) + '" alt="' + escHtml(label) + '" onerror="this.parentNode.textContent=\'' + initials + '\'"></div>'
+                : '<div class="trainer-avatar">' + initials + '</div>';
             var col = document.createElement('div');
             col.className = 'col-md-6 col-lg-4';
             var card = document.createElement('div');
@@ -258,7 +317,7 @@ function loadTrainers() {
             var body = document.createElement('div');
             body.className = 'card-body text-center';
             body.innerHTML =
-                '<div class="trainer-avatar">' + initials + '</div>' +
+                avatar +
                 '<h6 class="text-white fw-bold mt-3">' + escHtml(label) + '</h6>' +
                 '<span class="badge bg-info mb-2">' + escHtml(t.specialization || 'General') + '</span>' +
                 '<p class="text-muted small mb-1">' + (t.experience || 0) + ' years experience</p>' +

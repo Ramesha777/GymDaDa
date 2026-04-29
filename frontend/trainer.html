@@ -121,6 +121,16 @@
                             <div id="trainerStatus"></div>
                         </div>
                         <div class="card-body">
+                            <div class="profile-hero">
+                                <div class="profile-avatar-lg" id="trainerAvatar">
+                                    <span id="trainerAvatarInitials">?</span>
+                                </div>
+                                <div class="profile-hero-info">
+                                    <div class="profile-hero-name" id="trainerHeroName">—</div>
+                                    <div class="profile-hero-email" id="trainerHeroEmail">—</div>
+                                </div>
+                            </div>
+
                             <div id="trainerAlert" class="alert d-none" role="alert"></div>
                             <form id="trainerProfileForm">
                                 <div class="row g-3">
@@ -131,6 +141,11 @@
                                     <div class="col-md-6">
                                         <label class="form-label">Phone</label>
                                         <input type="tel" class="form-control" id="tProfPhone" required>
+                                    </div>
+                                    <div class="col-12">
+                                        <label class="form-label">Profile Image URL</label>
+                                        <input type="url" class="form-control" id="tProfPhotoURL" placeholder="https://example.com/me.jpg">
+                                        <small class="text-muted">Paste a direct link to an image. Leave empty to use your initials.</small>
                                     </div>
                                     <div class="col-md-6">
                                         <label class="form-label">Email</label>
