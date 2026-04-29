@@ -55,6 +55,40 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
 .table{color:var(--text);--bs-table-bg:transparent}
 .table thead th{border-bottom-color:var(--border);color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;font-weight:600;padding:10px 12px}
 .table td{border-bottom-color:var(--border);vertical-align:middle;font-size:13px;padding:10px 12px}
+.table .btn-sm{padding:6px 12px;font-size:12px}
+
+/* My Bookings — larger table + fluid card */
+#sec-bookings .dash-card{
+    width:100%;
+    max-width:100%;
+}
+#sec-bookings .dash-card .card-body{
+    padding:clamp(14px, 2.5vw, 28px);
+}
+#sec-bookings .table-responsive{
+    width:100%;
+    overflow-x:auto;
+    -webkit-overflow-scrolling:touch;
+}
+#sec-bookings .table thead th{
+    font-size:11px;
+    padding:12px 14px;
+    white-space:nowrap;
+    color:rgba(255,255,255,.9)!important;
+}
+#sec-bookings .table td{
+    font-size:14px;
+    padding:12px 14px;
+    vertical-align:middle;
+    color:#fff!important;
+}
+#sec-bookings .table .text-muted{color:rgba(255,255,255,.72)!important}
+#sec-bookings .table .badge{color:#fff!important}
+
+#sec-bookings #bookingsBody tr.bookings-row-clickable{cursor:pointer;transition:background .12s ease}
+#sec-bookings #bookingsBody tr.bookings-row-clickable:hover{background:rgba(255,107,53,.1)}
+#sec-bookings #bookingsBody tr.bookings-row-clickable:focus-visible{outline:2px solid var(--primary);outline-offset:-2px}
+
 .badge{font-weight:600;font-size:11px}
 .btn-sm{border-radius:8px}
 
@@ -71,8 +105,115 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
 .modal-footer{border-top-color:var(--border)}
 .btn-close{filter:invert(1)}
 
+/* Available classes — same figure as admin (icon tile + centered meta) */
+#sec-classes #classesGrid .dash-card.class-card-member{
+    border-radius:12px;
+    margin-bottom:0;
+    transition:transform .15s ease,border-color .15s ease,box-shadow .15s ease;
+}
+#sec-classes #classesGrid .dash-card.class-card-member:hover{
+    transform:translateY(-2px);
+    border-color:rgba(255,107,53,.45);
+    box-shadow:0 6px 18px rgba(0,0,0,.35);
+}
+#sec-classes #classesGrid .dash-card.class-card-member .card-body{
+    padding:12px 10px;
+}
+#sec-classes #classesGrid .class-avatar{
+    width:56px;height:56px;
+    border-radius:14px;
+    background:linear-gradient(135deg,rgba(255,107,53,.18),rgba(255,107,53,.05));
+    display:flex;align-items:center;justify-content:center;
+    color:var(--primary);font-size:20px;
+    margin:0 auto;
+    border:1px solid rgba(255,107,53,.25);
+}
+#sec-classes #classesGrid .dash-card h6{
+    font-size:12px;
+    line-height:1.25;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+#sec-classes #classesGrid .member-meta{
+    color:rgba(255,255,255,.9);
+    font-size:10px;
+    line-height:1.35;
+    margin-top:4px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+#sec-classes #classesGrid .dash-card .badge.bg-info{
+    color:#fff!important;
+    font-size:9px;
+    padding:3px 6px;
+    font-weight:600;
+}
+#sec-classes #classesGrid .dash-card .btn-sm{
+    padding:5px 10px;
+    font-size:11px;
+    border-radius:8px;
+}
+#sec-classes #classesGrid > .col-12.text-muted{color:rgba(255,255,255,.75)!important}
+#sec-classes #classesGrid > .col-12.text-danger{color:#fca5a5!important}
+
 .trainer-avatar{width:64px;height:64px;border-radius:50%;background:var(--primary);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:20px;margin:0 auto;overflow:hidden}
 .trainer-avatar img{width:100%;height:100%;object-fit:cover;display:block}
+
+/* Trainers tab — compact browse cards */
+#trainersGrid .trainer-browse-card{border-radius:12px;margin-bottom:0}
+#trainersGrid .trainer-browse-card .card-body{padding:12px 10px}
+#trainersGrid .trainer-browse-card .trainer-avatar{width:44px;height:44px;font-size:12px;border:2px solid rgba(255,107,53,.2)}
+#trainersGrid .trainer-browse-card .trainer-browse-title{font-size:12px;line-height:1.25;margin-top:8px;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#trainersGrid .trainer-browse-card .badge{font-size:9px;padding:3px 6px;font-weight:600}
+#trainersGrid .trainer-browse-card .trainer-browse-meta{font-size:10px;color:var(--muted);margin-bottom:4px}
+#trainersGrid .trainer-browse-card .trainer-browse-bio{font-size:10px;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+
+#trainersGrid .trainer-card-clickable{cursor:pointer;transition:transform .15s ease,border-color .15s ease,box-shadow .15s ease;border-radius:12px}
+#trainersGrid .trainer-card-clickable:hover{transform:translateY(-2px);border-color:rgba(255,107,53,.35)}
+#trainersGrid .trainer-card-clickable:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+
+.trainer-detail-modal{background:var(--card);border:1px solid var(--border);color:var(--text)}
+.trainer-detail-modal .modal-header,.trainer-detail-modal .modal-footer{border-color:var(--border)}
+.trainer-detail-hero{display:flex;align-items:flex-start;gap:16px;margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--border)}
+.trainer-detail-modal .trainer-detail-avatar{width:96px;height:96px;border-radius:50%;background:var(--primary);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:28px;flex-shrink:0;overflow:hidden;border:3px solid rgba(255,107,53,.25)}
+.trainer-detail-modal .trainer-detail-avatar img{width:100%;height:100%;object-fit:cover;display:block}
+.trainer-detail-meta{min-width:0}
+.trainer-detail-meta h6{font-size:18px;font-weight:700;color:#fff;margin-bottom:6px}
+.trainer-detail-meta .text-muted{font-size:13px}
+.trainer-detail-section{margin-top:14px}
+.trainer-detail-section h6{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:600;margin-bottom:8px}
+.trainer-class-pill{display:inline-block;background:rgba(255,107,53,.12);border:1px solid rgba(255,107,53,.25);border-radius:8px;padding:6px 10px;margin:0 6px 6px 0;font-size:12px}
+/* Weekly timetable — readable, full-width inside modal */
+.trainer-detail-modal .trainer-avail-list{
+    font-size:13px;
+    line-height:1.4;
+    border:1px solid rgba(255,255,255,.12);
+    border-radius:8px;
+    overflow:hidden;
+    width:100%;
+    max-width:100%;
+    box-sizing:border-box;
+    background:rgba(0,0,0,.2);
+    color:#fff;
+}
+.trainer-detail-modal .trainer-avail-row{
+    display:flex;
+    justify-content:space-between;
+    align-items:flex-start;
+    gap:12px;
+    padding:8px 14px;
+    min-height:0;
+    border-bottom:1px solid rgba(255,255,255,.08);
+    color:#fff;
+}
+.trainer-detail-modal .trainer-avail-row:last-child{border-bottom:none}
+.trainer-detail-modal .trainer-avail-row span{color:#fff;font-weight:500}
+.trainer-detail-modal .trainer-avail-row span.text-muted{color:rgba(255,255,255,.72)!important}
+.trainer-detail-modal .trainer-detail-section>p.text-muted{color:rgba(255,255,255,.78)!important;font-size:12px!important}
+
+/* Booking confirmation modal */
+.booking-confirm-modal{background:var(--card);border:1px solid var(--border);color:var(--text)}
+.booking-ref-display{font-size:clamp(28px,6vw,40px);letter-spacing:.06em;line-height:1.2}
+.booking-qr-host{padding:12px;background:#fff;min-height:120px;min-width:120px;align-items:center}
+.booking-qr-host img{display:block;margin:0 auto}
 
 .profile-hero{display:flex;align-items:center;gap:18px;padding:14px 0 22px;margin-bottom:18px;border-bottom:1px solid var(--border)}
 .profile-avatar-lg{width:96px;height:96px;border-radius:50%;background:var(--primary);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:32px;flex-shrink:0;overflow:hidden;border:3px solid rgba(255,107,53,.25)}
