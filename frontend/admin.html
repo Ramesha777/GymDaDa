@@ -111,17 +111,30 @@
                 </div>
             </div>
 
-            <!-- Recent pending trainer applications (quick glance) -->
+            <!-- Recent pending trainer applications (card grid) -->
             <div class="dash-card">
                 <div class="card-header">
-                    <span><i class="fas fa-bell me-2 text-warning"></i>Pending Trainer Applications</span>
+                    <span><i class="fas fa-bell me-2 text-warning"></i>Pending Trainer Applications <small class="text-muted ms-1" id="overviewPendingCount"></small></span>
                     <button class="btn btn-sm btn-outline-light" id="btnRefreshOverview"><i class="fas fa-sync-alt"></i></button>
+                </div>
+                <div class="card-body">
+                    <div class="row g-2" id="overviewPendingGrid">
+                        <div class="col-12 text-center text-muted py-4">Loading…</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Pending trainer → class assignment requests -->
+            <div class="dash-card mt-3">
+                <div class="card-header">
+                    <span><i class="fas fa-user-tag me-2 text-info"></i>Trainer class requests <small class="text-muted ms-1" id="overviewClassReqCount"></small></span>
+                    <button type="button" class="btn btn-sm btn-outline-light" id="btnRefreshClassRequests"><i class="fas fa-sync-alt"></i></button>
                 </div>
                 <div class="card-body">
                     <div class="table-responsive">
                         <table class="table table-sm mb-0">
-                            <thead><tr><th>Name</th><th>Email</th><th>Specialization</th><th>Date</th><th>Actions</th></tr></thead>
-                            <tbody id="overviewPendingBody"></tbody>
+                            <thead><tr><th>Class</th><th>Type</th><th>Trainer</th><th>Email</th><th>Requested</th><th></th></tr></thead>
+                            <tbody id="overviewClassRequestsBody"></tbody>
                         </table>
                     </div>
                 </div>

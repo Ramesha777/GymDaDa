@@ -116,6 +116,7 @@ function showDashboard(user) {
     loadOverviewStats();
     loadAllMembers();
     loadTrainerApplications();
+    loadClassesAdmin();
     populateTrainerSelect();
 }
 
@@ -252,46 +253,200 @@ function loadOverviewStats() {
         if ($('statClasses')) $('statClasses').textContent = '0';
     });
 
-    var ob = $('overviewPendingBody');
-    if (!ob) return;
-    ob.innerHTML = '<tr><td colspan="5" class="text-center text-muted">Loading…</td></tr>';
+    var grid = $('overviewPendingGrid');
+    if (grid) {
+    grid.innerHTML = '<div class="col-12 text-center text-muted py-4">Loading…</div>';
 
     db.collection('trainers').where('approvalStatus', '==', 'pending').get()
         .then(function(snap) {
             var rows = [];
-            snap.forEach(function(doc) { rows.push({ id: doc.id, d: doc.data() }); });
-            rows.sort(function(a, b) { return tsSeconds(b.d.createdAt) - tsSeconds(a.d.createdAt); });
-            rows = rows.slice(0, 10);
+            snap.forEach(function(doc) {
+                var item = { id: doc.id, data: doc.data() };
+                rows.push(item);
+                allTrainersById[doc.id] = item;
+            });
+            rows.sort(function(a, b) { return tsSeconds(b.data.createdAt) - tsSeconds(a.data.createdAt); });
+            var top = rows.slice(0, 12);
 
-            ob.innerHTML = '';
-            if (!rows.length) {
-                ob.innerHTML = '<tr><td colspan="5" class="text-center text-muted">No pending trainer applications</td></tr>';
+            if ($('overviewPendingCount')) {
+                $('overviewPendingCount').textContent = '(' + rows.length + ')';
+            }
+
+            grid.innerHTML = '';
+            if (!top.length) {
+                grid.innerHTML = '<div class="col-12 text-center text-muted py-4">No pending trainer applications</div>';
                 return;
             }
-            rows.forEach(function(row) {
-                var d = row.d;
-                var dateStr = formatDate(d.createdAt);
-                var tr = document.createElement('tr');
-                tr.innerHTML =
-                    '<td><div class="user-cell">' + avatarHtml(d.displayName, d.email, d.photoURL, 'sm') +
-                        '<span>' + escHtml(d.displayName || '—') + '</span></div></td>' +
-                    '<td>' + escHtml(d.email || '—') + '</td>' +
-                    '<td><span class="badge bg-info">' + escHtml(d.specialization || '—') + '</span></td>' +
-                    '<td>' + dateStr + '</td>' +
-                    '<td>' +
-                        '<button class="btn btn-sm btn-success me-1" onclick="approveTrainer(\'' + row.id + '\')"><i class="fas fa-check"></i></button>' +
-                        '<button class="btn btn-sm btn-danger" onclick="rejectTrainer(\'' + row.id + '\')"><i class="fas fa-times"></i></button>' +
-                    '</td>';
-                ob.appendChild(tr);
+
+            top.forEach(function(item) {
+                var d = item.data;
+                var name = d.displayName || '—';
+                var initials = getInitials(name, d.email);
+                var hasPhoto = d.photoURL && /^https?:\/\//i.test(d.photoURL);
+                var avatar = hasPhoto
+                    ? '<div class="trainer-avatar"><img src="' + escHtml(d.photoURL) + '" alt="' + escHtml(name) + '" onerror="this.parentNode.textContent=\'' + initials + '\'"></div>'
+                    : '<div class="trainer-avatar">' + initials + '</div>';
+
+                var col = document.createElement('div');
+                col.className = 'col-6 col-sm-4 col-md-3 col-lg-2';
+                col.innerHTML =
+                    '<div class="dash-card h-100 member-card" tabindex="0" data-id="' + item.id + '">' +
+                        '<div class="card-body text-center">' +
+                            avatar +
+                            '<h6 class="text-white fw-bold mt-2 mb-1">' + escHtml(name) + '</h6>' +
+                            '<span class="badge bg-info">' + escHtml(d.specialization || '—') + '</span>' +
+                            '<div class="mt-1"><span class="badge bg-warning">Pending</span></div>' +
+                        '</div>' +
+                    '</div>';
+                var card = col.querySelector('.member-card');
+                card.addEventListener('click', function() { openTrainerDetailModal(item.id); });
+                card.addEventListener('keydown', function(e) {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        openTrainerDetailModal(item.id);
+                    }
+                });
+                grid.appendChild(col);
             });
         })
         .catch(function() {
-            ob.innerHTML = '<tr><td colspan="5" class="text-center text-danger">Could not load pending trainers.</td></tr>';
+            grid.innerHTML = '<div class="col-12 text-center text-danger py-4">Could not load pending trainers.</div>';
         });
+    }
+
+    loadOverviewClassTrainerRequests();
+}
+
+function loadOverviewClassTrainerRequests() {
+    var tbody = $('overviewClassRequestsBody');
+    if (!tbody) return;
+    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">Loading…</td></tr>';
+
+    db.collection('trainerClassRequests').where('status', '==', 'pending').get()
+        .then(function(snap) {
+            var rows = [];
+            snap.forEach(function(doc) {
+                rows.push({ id: doc.id, d: doc.data() });
+            });
+            rows.sort(function(a, b) {
+                return tsSeconds(b.d.createdAt || b.d.updatedAt) - tsSeconds(a.d.createdAt || a.d.updatedAt);
+            });
+
+            if ($('overviewClassReqCount')) {
+                $('overviewClassReqCount').textContent = '(' + rows.length + ')';
+            }
+
+            tbody.innerHTML = '';
+            if (!rows.length) {
+                tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">No pending trainer class requests</td></tr>';
+                return;
+            }
+
+            rows.forEach(function(row) {
+                var d = row.d;
+                var tr = document.createElement('tr');
+                var dateStr = formatDate(d.createdAt);
+
+                var approveBtn = document.createElement('button');
+                approveBtn.type = 'button';
+                approveBtn.className = 'btn btn-sm btn-success me-1';
+                approveBtn.title = 'Assign trainer to this class';
+                approveBtn.innerHTML = '<i class="fas fa-check"></i>';
+                approveBtn.addEventListener('click', function() {
+                    approveTrainerClassRequest(row.id, d.classId, d.trainerId);
+                });
+
+                var rejectBtn = document.createElement('button');
+                rejectBtn.type = 'button';
+                rejectBtn.className = 'btn btn-sm btn-outline-danger';
+                rejectBtn.title = 'Reject';
+                rejectBtn.innerHTML = '<i class="fas fa-times"></i>';
+                rejectBtn.addEventListener('click', function() {
+                    rejectTrainerClassRequest(row.id);
+                });
+
+                var tdAct = document.createElement('td');
+                tdAct.appendChild(approveBtn);
+                tdAct.appendChild(rejectBtn);
+
+                var tdClass = document.createElement('td');
+                tdClass.textContent = d.className || d.classId || '—';
+                var tdType = document.createElement('td');
+                tdType.className = 'small';
+                tdType.textContent = d.classType || '—';
+                var tdTn = document.createElement('td');
+                tdTn.textContent = d.trainerName || '—';
+                var tdEm = document.createElement('td');
+                tdEm.className = 'small';
+                tdEm.textContent = d.trainerEmail || '—';
+                var tdDt = document.createElement('td');
+                tdDt.className = 'small';
+                tdDt.textContent = dateStr;
+
+                tr.appendChild(tdClass);
+                tr.appendChild(tdType);
+                tr.appendChild(tdTn);
+                tr.appendChild(tdEm);
+                tr.appendChild(tdDt);
+                tr.appendChild(tdAct);
+
+                tbody.appendChild(tr);
+            });
+        })
+        .catch(function() {
+            tbody.innerHTML = '<tr><td colspan="6" class="text-center text-danger">Could not load class requests.</td></tr>';
+        });
+}
+
+function approveTrainerClassRequest(reqDocId, classId, trainerUid) {
+    if (!classId || !trainerUid) return;
+    if (!confirm('Assign this trainer to this class? Their availability should align with the class schedule.')) return;
+
+    db.collection('trainerClassRequests').doc(reqDocId).get().then(function(reqSnap) {
+        if (!reqSnap.exists) throw new Error('Request no longer exists.');
+        var d = reqSnap.data();
+        var tName = d.trainerName || '';
+
+        var batch = db.batch();
+        batch.update(db.collection('classes').doc(classId), {
+            trainerId: trainerUid,
+            trainerName: tName,
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        batch.update(db.collection('trainerClassRequests').doc(reqDocId), {
+            status: 'approved',
+            resolvedAt: firebase.firestore.FieldValue.serverTimestamp(),
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        return batch.commit();
+    }).then(function() {
+        loadOverviewStats();
+        loadClassesAdmin();
+        populateTrainerSelect();
+        loadTrainerAvailability();
+    }).catch(function(err) {
+        alert(err.message || 'Could not approve request.');
+    });
+}
+
+function rejectTrainerClassRequest(reqDocId) {
+    if (!confirm('Reject this class assignment request?')) return;
+    db.collection('trainerClassRequests').doc(reqDocId).update({
+        status: 'rejected',
+        resolvedAt: firebase.firestore.FieldValue.serverTimestamp(),
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    }).then(function() {
+        loadOverviewStats();
+    }).catch(function(err) {
+        alert(err.message || 'Could not reject request.');
+    });
 }
 
 if ($('btnRefreshOverview')) {
     $('btnRefreshOverview').addEventListener('click', loadOverviewStats);
+}
+if ($('btnRefreshClassRequests')) {
+    $('btnRefreshClassRequests').addEventListener('click', loadOverviewClassTrainerRequests);
 }
 
 /* ─── All members (card grid + search + detail modal) ─── */

@@ -119,13 +119,22 @@ body { font-family: 'Poppins', sans-serif; background: var(--bg); color: var(--t
 .dash-card .card-body { padding: 20px; }
 
 /* ── Table ── */
-.table { color: var(--text); }
+.table { color: var(--text); --bs-table-bg: transparent; }
 .table thead th {
     border-bottom-color: var(--border); color: var(--muted);
     font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
     font-weight: 600; white-space: nowrap;
 }
 .table td { border-bottom-color: var(--border); vertical-align: middle; font-size: 13px; }
+/* Bootstrap table color vars default to dark text — unreadable on dark cards */
+.dash-card .table {
+    --bs-table-color: #ffffff;
+    color: #ffffff;
+}
+.dash-card .table thead th { color: rgba(255, 255, 255, 0.78) !important; }
+.dash-card .table tbody td { color: rgba(255, 255, 255, 0.96) !important; }
+.dash-card .table .text-muted { color: rgba(255, 255, 255, 0.58) !important; }
+.content .text-muted { color: rgba(255, 255, 255, 0.62) !important; }
 .badge { font-weight: 600; font-size: 11px; letter-spacing: 0.3px; }
 .btn-sm { border-radius: 8px; }
 
@@ -442,7 +451,7 @@ body { font-family: 'Poppins', sans-serif; background: var(--bg); color: var(--t
 .member-card .badge { font-size: 9px; padding: 3px 6px; }
 
 /* ─── Member Detail Modal ─── */
-.member-detail-modal { background: var(--card); border: 1px solid var(--border); color: var(--text); }
+.member-detail-modal { background: var(--card); border: 1px solid var(--border); color: #ffffff; }
 .member-detail-modal .modal-header,
 .member-detail-modal .modal-footer { border-color: var(--border); }
 .member-detail-hero {
@@ -466,7 +475,7 @@ body { font-family: 'Poppins', sans-serif; background: var(--bg); color: var(--t
     margin-bottom: 6px;
     word-break: break-word;
 }
-.member-detail-sub { font-size: 13px; color: var(--muted); }
+.member-detail-sub { font-size: 13px; color: rgba(255, 255, 255, 0.72); }
 
 .member-detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 18px; }
 .md-row.md-row-full { grid-column: 1 / -1; }
@@ -476,7 +485,7 @@ body { font-family: 'Poppins', sans-serif; background: var(--bg); color: var(--t
 }
 .md-label i { margin-right: 6px; color: var(--primary); opacity: 0.9; }
 .md-value {
-    font-size: 14px; color: var(--text); font-weight: 500;
+    font-size: 14px; color: #ffffff; font-weight: 500;
     word-break: break-word;
 }
 .md-progress {
