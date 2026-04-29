@@ -178,11 +178,36 @@
 
         <!-- ═══ MY CLASSES ═══ -->
         <div class="trainer-section" id="sec-classes">
-            <div class="d-flex justify-content-between align-items-center mb-4">
-                <h5 class="text-white fw-bold mb-0">My Classes</h5>
-                <button class="btn btn-sm btn-outline-light" id="btnRefreshClasses"><i class="fas fa-sync-alt me-1"></i>Refresh</button>
+            <div class="d-flex justify-content-between align-items-start mb-3 flex-wrap gap-2">
+                <div>
+                    <h5 class="text-white fw-bold mb-1">My Classes</h5>
+                    <p class="text-muted small mb-0">Classes assigned to you by the gym admin, and open classes you can request to teach.</p>
+                </div>
+                <button type="button" class="btn btn-sm btn-outline-light" id="btnRefreshClasses"><i class="fas fa-sync-alt me-1"></i>Refresh</button>
             </div>
-            <div class="row g-3" id="myClassesGrid">
+            <div id="classAssignAlert" class="alert d-none mb-3" role="alert"></div>
+
+            <h6 class="text-white fw-semibold mb-2"><i class="fas fa-inbox me-2 text-primary"></i>Member requests</h6>
+            <p class="text-muted small mb-3">Members who asked you to approve joining these classes. Approve or decline — booking still uses “Book Now” on their side.</p>
+            <div class="dash-card mb-4">
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-sm mb-0 align-middle">
+                            <thead><tr><th>Member</th><th>Class</th><th>Requested</th><th style="width:140px"></th></tr></thead>
+                            <tbody id="trainerMemberRequestsBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <h6 class="text-white fw-semibold mb-2"><i class="fas fa-user-check me-2 text-success"></i>Assigned to you</h6>
+            <div class="row g-3 mb-4" id="trainerAssignedClassesGrid">
+                <div class="col-12 text-center text-muted py-4">Loading…</div>
+            </div>
+
+            <h6 class="text-white fw-semibold mb-2 mt-4"><i class="fas fa-hand-pointer me-2 text-warning"></i>Open classes — request to teach</h6>
+            <p class="text-muted small mb-3">Active gym classes that do not have a trainer yet. Submit a request and an admin will assign you.</p>
+            <div class="row g-3" id="trainerOpenClassesGrid">
                 <div class="col-12 text-center text-muted py-4">Loading…</div>
             </div>
         </div>

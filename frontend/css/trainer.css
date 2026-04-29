@@ -69,6 +69,17 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
 .table{color:var(--text);--bs-table-bg:transparent}
 .table thead th{border-bottom-color:var(--border);color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;font-weight:600;padding:10px 12px}
 .table td{border-bottom-color:var(--border);vertical-align:middle;font-size:13px;padding:10px 12px}
+/* Bootstrap sets dark --bs-table-color; force readable light text on dark dash cards */
+.dash-card .table{
+    --bs-table-color:#fff;
+    --bs-table-bg:transparent;
+    color:#fff;
+}
+.dash-card .table thead th{color:rgba(255,255,255,.78)!important}
+.dash-card .table tbody td{color:rgba(255,255,255,.96)!important}
+.dash-card .table .text-muted{color:rgba(255,255,255,.58)!important}
+/* Empty states / helper copy sit on --bg or --card */
+.content .text-muted{color:rgba(255,255,255,.62)!important}
 .badge{font-weight:600;font-size:11px}
 .btn-sm{border-radius:8px}
 

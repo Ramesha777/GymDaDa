@@ -15,6 +15,7 @@ var currentUid = null;
 var currentUser = null;
 var trainerData = {};
 var chatMsgUnsub = null;
+var trainerClassRequestByClassId = {};
 
 function escHtml(s) {
     if (s == null || s === '') return '';
@@ -28,6 +29,8 @@ function showDashboard(user) {
     $('mainContent').style.display = 'block';
     if ($('userEmail')) $('userEmail').textContent = user.email || '';
     loadTrainerProfile(user.uid);
+    loadTrainerOverviewStats();
+    loadTrainerClasses();
 }
 
 auth.onAuthStateChanged(function(user) {
@@ -88,6 +91,7 @@ function switchSection(name) {
     if ($('topbarTitle')) $('topbarTitle').innerHTML = titles[name] || name;
 
     if (name === 'members') loadMyMembers();
+    if (name === 'classes') loadTrainerClasses();
     if (name === 'availability') loadAvailability();
     if (name === 'chat') openTrainerAdminChat();
 }
@@ -436,6 +440,352 @@ if ($('btnSaveAvail')) {
 }
 if ($('btnRefreshAvail')) {
     $('btnRefreshAvail').addEventListener('click', loadAvailability);
+}
+
+/* ─── My classes (assigned by admin + requests for open slots) ─── */
+function trainerClassRequestDocId(classId) {
+    return classId + '_' + currentUid;
+}
+
+function formatClassScheduleTrainer(c) {
+    var s = c.schedule || {};
+    var day = s.day || '—';
+    var time = s.time || '—';
+    var dur = s.duration ? s.duration + ' min' : '';
+    var parts = [day, time];
+    if (dur) parts.push(dur);
+    return parts.join(' · ');
+}
+
+function showClassAssignAlert(msg, type) {
+    var el = $('classAssignAlert');
+    if (!el) return;
+    el.className = 'alert alert-' + type;
+    el.textContent = msg;
+    el.classList.remove('d-none');
+    setTimeout(function() { el.classList.add('d-none'); }, 5000);
+}
+
+function loadTrainerOverviewStats() {
+    var statEl = $('statClasses');
+    if (!statEl) return;
+    db.collection('classes').where('trainerId', '==', currentUid).get()
+        .then(function(snap) {
+            statEl.textContent = snap.size;
+        })
+        .catch(function() {
+            statEl.textContent = '0';
+        });
+}
+
+function loadTrainerClassRequestsMap() {
+    return db.collection('trainerClassRequests').where('trainerId', '==', currentUid).get()
+        .then(function(snap) {
+            trainerClassRequestByClassId = {};
+            snap.forEach(function(doc) {
+                var d = doc.data();
+                if (d.classId) {
+                    trainerClassRequestByClassId[d.classId] = {
+                        id: doc.id,
+                        status: d.status || 'pending'
+                    };
+                }
+            });
+        });
+}
+
+function trainerTimestampSeconds(ts) {
+    if (!ts) return 0;
+    if (typeof ts.seconds === 'number') return ts.seconds;
+    if (typeof ts.toMillis === 'function') return Math.floor(ts.toMillis() / 1000);
+    return 0;
+}
+
+function formatTrainerReqDate(ts) {
+    var sec = trainerTimestampSeconds(ts);
+    if (!sec) return '—';
+    return new Date(sec * 1000).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
+}
+
+function resolveMemberClassRequest(docId, approved) {
+    if (!docId) return;
+    if (!confirm(approved ? 'Approve this member\'s request for this class?' : 'Decline this member request?')) return;
+    db.collection('memberClassRequests').doc(docId).update({
+        status: approved ? 'approved' : 'rejected',
+        resolvedAt: firebase.firestore.FieldValue.serverTimestamp(),
+        resolvedBy: currentUid,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    }).then(function() {
+        showClassAssignAlert(approved ? 'Request approved.' : 'Request declined.', approved ? 'success' : 'secondary');
+        loadMemberClassRequestsForTrainer();
+    }).catch(function(err) {
+        showClassAssignAlert(err.message || 'Could not update request.', 'danger');
+    });
+}
+
+function loadMemberClassRequestsForTrainer() {
+    var tbody = $('trainerMemberRequestsBody');
+    if (!tbody) return;
+    tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-3">Loading…</td></tr>';
+
+    db.collection('memberClassRequests').where('trainerId', '==', currentUid).get()
+        .then(function(snap) {
+            var rows = [];
+            snap.forEach(function(doc) {
+                var d = doc.data();
+                if ((d.status || 'pending') !== 'pending') return;
+                rows.push({ id: doc.id, d: d });
+            });
+            rows.sort(function(a, b) {
+                return trainerTimestampSeconds(b.d.createdAt) - trainerTimestampSeconds(a.d.createdAt);
+            });
+
+            tbody.innerHTML = '';
+            if (!rows.length) {
+                tbody.innerHTML =
+                    '<tr><td colspan="4" class="text-center text-muted py-4">No pending member requests.</td></tr>';
+                return;
+            }
+
+            rows.forEach(function(row) {
+                var d = row.d;
+                var tr = document.createElement('tr');
+
+                var tdM = document.createElement('td');
+                tdM.textContent = d.memberName || d.memberEmail || '—';
+
+                var tdC = document.createElement('td');
+                tdC.textContent = d.className || d.classId || '—';
+
+                var tdT = document.createElement('td');
+                tdT.className = 'small text-muted';
+                tdT.textContent = formatTrainerReqDate(d.createdAt);
+
+                var tdA = document.createElement('td');
+                var bOk = document.createElement('button');
+                bOk.type = 'button';
+                bOk.className = 'btn btn-sm btn-success me-1';
+                bOk.title = 'Approve';
+                bOk.innerHTML = '<i class="fas fa-check"></i>';
+                (function(id) {
+                    bOk.addEventListener('click', function() { resolveMemberClassRequest(id, true); });
+                })(row.id);
+
+                var bNo = document.createElement('button');
+                bNo.type = 'button';
+                bNo.className = 'btn btn-sm btn-outline-danger';
+                bNo.title = 'Decline';
+                bNo.innerHTML = '<i class="fas fa-times"></i>';
+                (function(id2) {
+                    bNo.addEventListener('click', function() { resolveMemberClassRequest(id2, false); });
+                })(row.id);
+
+                tdA.appendChild(bOk);
+                tdA.appendChild(bNo);
+
+                tr.appendChild(tdM);
+                tr.appendChild(tdC);
+                tr.appendChild(tdT);
+                tr.appendChild(tdA);
+                tbody.appendChild(tr);
+            });
+        })
+        .catch(function(err) {
+            console.error(err);
+            tbody.innerHTML =
+                '<tr><td colspan="4" class="text-center text-danger py-3">Could not load member requests.</td></tr>';
+        });
+}
+
+function renderTrainerClassCard(item, isAssigned) {
+    var c = item.data;
+    var name = c.name || 'Untitled';
+    var type = c.type || '—';
+    var sched = formatClassScheduleTrainer(c);
+    var desc = (c.description || '').trim();
+    if (desc.length > 140) desc = desc.substring(0, 140) + '…';
+
+    var col = document.createElement('div');
+    col.className = 'col-md-6 col-lg-4';
+
+    var inner = document.createElement('div');
+    inner.className = 'dash-card h-100';
+
+    var body = document.createElement('div');
+    body.className = 'card-body';
+
+    body.innerHTML =
+        '<div class="d-flex justify-content-between align-items-start mb-2">' +
+            '<h6 class="text-white fw-bold mb-0">' + escHtml(name) + '</h6>' +
+            '<span class="badge bg-info">' + escHtml(type) + '</span>' +
+        '</div>' +
+        (desc ? '<p class="text-muted small mb-2">' + escHtml(desc) + '</p>' : '<p class="text-muted small mb-2">No description</p>') +
+        '<div class="small text-muted mb-2"><i class="fas fa-calendar me-1"></i>' + escHtml(sched) + '</div>' +
+        '<div class="small text-muted mb-0"><i class="fas fa-users me-1"></i>' +
+            (c.enrolled || 0) + ' / ' + (c.capacity || 0) + ' enrolled</div>';
+
+    if (isAssigned) {
+        var badgeRow = document.createElement('div');
+        badgeRow.className = 'mt-3';
+        badgeRow.innerHTML = '<span class="badge bg-success"><i class="fas fa-check me-1"></i>Assigned to you</span>';
+        body.appendChild(badgeRow);
+    } else {
+        var req = trainerClassRequestByClassId[item.id];
+        var st = req ? req.status : null;
+        var actions = document.createElement('div');
+        actions.className = 'mt-3';
+
+        if (st === 'pending') {
+            actions.innerHTML = '<span class="badge bg-warning text-dark"><i class="fas fa-clock me-1"></i>Request pending admin review</span>';
+        } else if (st === 'rejected') {
+            actions.innerHTML =
+                '<span class="badge bg-secondary me-2 mb-2">Not approved</span>' +
+                '<button type="button" class="btn btn-sm btn-outline-primary request-class-btn" data-class-id="' +
+                    escHtml(item.id) + '"><i class="fas fa-redo me-1"></i>Request again</button>';
+        } else if (st === 'approved') {
+            actions.innerHTML = '<span class="badge bg-success">Approved — reload if this still shows here.</span>';
+        } else {
+            actions.innerHTML =
+                '<button type="button" class="btn btn-sm btn-primary request-class-btn" data-class-id="' +
+                    escHtml(item.id) + '"><i class="fas fa-paper-plane me-1"></i>Request to teach</button>';
+        }
+        body.appendChild(actions);
+    }
+
+    inner.appendChild(body);
+    col.appendChild(inner);
+    return col;
+}
+
+function loadTrainerClasses() {
+    var assignedGrid = $('trainerAssignedClassesGrid');
+    var openGrid = $('trainerOpenClassesGrid');
+    if (!assignedGrid || !openGrid) return;
+    assignedGrid.innerHTML = '<div class="col-12 text-center text-muted py-4">Loading…</div>';
+    openGrid.innerHTML = '<div class="col-12 text-center text-muted py-4">Loading…</div>';
+
+    db.collection('classes').get()
+        .then(function(snap) {
+            return loadTrainerClassRequestsMap()
+                .catch(function(err) {
+                    console.warn('trainerClassRequests:', err);
+                    trainerClassRequestByClassId = {};
+                })
+                .then(function() { return snap; });
+        })
+        .then(function(snap) {
+        var assigned = [];
+        var openList = [];
+
+        snap.forEach(function(doc) {
+            var c = doc.data();
+            var st = c.status || 'active';
+            if (st !== 'active') return;
+
+            var tid = (c.trainerId || '').trim();
+            if (tid === currentUid) {
+                assigned.push({ id: doc.id, data: c });
+            } else if (!tid) {
+                openList.push({ id: doc.id, data: c });
+            }
+        });
+
+        assigned.sort(function(a, b) {
+            return (a.data.name || '').localeCompare(b.data.name || '');
+        });
+        openList.sort(function(a, b) {
+            return (a.data.name || '').localeCompare(b.data.name || '');
+        });
+
+        assignedGrid.innerHTML = '';
+        if (!assigned.length) {
+            assignedGrid.innerHTML =
+                '<div class="col-12 text-center text-muted py-4">No classes assigned to you yet. When admin assigns you as the trainer, they appear here. You can also request open classes below.</div>';
+        } else {
+            assigned.forEach(function(item) {
+                assignedGrid.appendChild(renderTrainerClassCard(item, true));
+            });
+        }
+
+        openGrid.innerHTML = '';
+        if (!openList.length) {
+            openGrid.innerHTML =
+                '<div class="col-12 text-center text-muted py-4">There are no open classes without a trainer right now.</div>';
+        } else {
+            openList.forEach(function(item) {
+                openGrid.appendChild(renderTrainerClassCard(item, false));
+            });
+        }
+
+        loadMemberClassRequestsForTrainer();
+        loadTrainerOverviewStats();
+    }).catch(function(err) {
+        console.error(err);
+        assignedGrid.innerHTML = '<div class="col-12 text-center text-danger py-4">Could not load classes.</div>';
+        openGrid.innerHTML = '';
+    });
+}
+
+function submitTrainerClassRequest(classId) {
+    if (!currentUid) return;
+    var tname = (trainerData && trainerData.displayName) ? trainerData.displayName.trim() : '';
+    if (!tname && currentUser && currentUser.email) tname = currentUser.email;
+    if (!tname) tname = 'Trainer';
+    var temail = (currentUser && currentUser.email) || '';
+
+    var rid = trainerClassRequestDocId(classId);
+
+    db.collection('classes').doc(classId).get().then(function(doc) {
+        if (!doc.exists) {
+            showClassAssignAlert('This class could not be found.', 'danger');
+            return null;
+        }
+        var c = doc.data();
+        var tid = (c.trainerId || '').trim();
+        if (tid && tid !== currentUid) {
+            showClassAssignAlert('This class already has a trainer assigned.', 'warning');
+            return null;
+        }
+        if (tid === currentUid) {
+            showClassAssignAlert('You are already assigned to this class.', 'info');
+            return null;
+        }
+
+        return db.collection('trainerClassRequests').doc(rid).set({
+            classId: classId,
+            className: c.name || '',
+            classType: c.type || '',
+            trainerId: currentUid,
+            trainerName: tname,
+            trainerEmail: temail,
+            status: 'pending',
+            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        }, { merge: true }).then(function() { return true; });
+    }).then(function(saved) {
+        if (!saved) return;
+        showClassAssignAlert('Request submitted. A gym admin will review it.', 'success');
+        loadTrainerClasses();
+    }).catch(function(err) {
+        showClassAssignAlert(err.message || 'Could not submit request.', 'danger');
+    });
+}
+
+var secClassesEl = $('sec-classes');
+if (secClassesEl) {
+    secClassesEl.addEventListener('click', function(e) {
+        var btn = e.target.closest('.request-class-btn');
+        if (!btn || !btn.getAttribute('data-class-id')) return;
+        submitTrainerClassRequest(btn.getAttribute('data-class-id'));
+    });
+}
+
+if ($('btnRefreshClasses')) {
+    $('btnRefreshClasses').addEventListener('click', loadTrainerClasses);
+}
+
+if ($('btnRefreshOverview')) {
+    $('btnRefreshOverview').addEventListener('click', loadTrainerOverviewStats);
 }
 
 /* ─── Members (from bookings) ─── */
