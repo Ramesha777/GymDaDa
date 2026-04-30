@@ -27,6 +27,9 @@ var registerTab    = $('registerTab');
 var trainerRegTab  = $('trainerRegTab');
 var authAlert      = $('authAlert');
 
+var BOOK_LOGIN_HINT =
+    'To book a lesson or class session, sign in to your member account (or register as a member). You can book from your dashboard after logging in.';
+
 var allAuthForms = [loginForm, registerForm, trainerRegForm].filter(Boolean);
 var allAuthTabs  = [loginTab, registerTab, trainerRegTab].filter(Boolean);
 
@@ -67,6 +70,25 @@ function showAlert(el, msg, type) {
     el.textContent = msg;
     el.classList.remove('d-none');
 }
+
+(function showLoginGateHintFromQuery() {
+    var box = $('loginGateHint');
+    var txt = $('loginGateHintText');
+    if (!box || !txt) return;
+    try {
+        var p = new URLSearchParams(window.location.search || '');
+        if ((p.get('from') || '').toLowerCase() !== 'book') return;
+        txt.textContent = BOOK_LOGIN_HINT;
+        box.classList.remove('d-none');
+        if (window.history && typeof window.history.replaceState === 'function') {
+            var path = window.location.pathname || 'login.html';
+            var hash = window.location.hash || '';
+            window.history.replaceState(null, '', path + hash);
+        }
+    } catch (e) {
+        /* ignore */
+    }
+})();
 
 /* ─── Auth: Login ─── */
 if (loginForm) {

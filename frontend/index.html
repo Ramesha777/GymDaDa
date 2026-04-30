@@ -35,7 +35,7 @@
 <div class="nav-backdrop" id="navBackdrop"></div>
 
 <!-- ─── HERO ─── -->
-<section id="home" class="hero" style="--hero-bg: url('images/merge2.png'); --hero-bg-mobile: url('images/merge.png');">
+<section id="home" class="hero">
     <div class="hero-content">
         <h1>Welcome to <span class="accent">GymDD</span> Fitness Center</h1>
         <p>Transform your body and mind with world-class facilities, expert trainers, and personalized fitness programs. Join thousands who have achieved their goals with us.</p>
@@ -230,7 +230,7 @@
                         <div><strong>200+</strong><small>Clients</small></div>
                         <div><strong>500+</strong><small>Sessions</small></div>
                     </div>
-                    <a href="#contact" class="btn btn-full btn-sm">
+                    <a href="login.html?from=book" class="btn btn-full btn-sm">
                         <i class="fas fa-calendar-plus"></i> Book Session
                     </a>
                 </div>
@@ -263,7 +263,7 @@
                         <div><strong>150+</strong><small>Clients</small></div>
                         <div><strong>400+</strong><small>Sessions</small></div>
                     </div>
-                    <a href="#contact" class="btn btn-full btn-sm">
+                    <a href="login.html?from=book" class="btn btn-full btn-sm">
                         <i class="fas fa-calendar-plus"></i> Book Session
                     </a>
                 </div>
@@ -296,7 +296,7 @@
                         <div><strong>300+</strong><small>Clients</small></div>
                         <div><strong>800+</strong><small>Sessions</small></div>
                     </div>
-                    <a href="#contact" class="btn btn-full btn-sm">
+                    <a href="login.html?from=book" class="btn btn-full btn-sm">
                         <i class="fas fa-calendar-plus"></i> Book Session
                     </a>
                 </div>
@@ -373,26 +373,27 @@
             <p>Visit us or drop a message. We'd love to hear from you.</p>
         </div>
 <div class="contact-form-container">
-    <form class="contact-form" action="mailto:info@gymdd.com?subject=Contact%20from%20GymDD" method="post" enctype="text/plain">
+    <form class="contact-form" id="contactForm" novalidate>
         <div class="form-row">
             <div class="form-group">
                 <label><i class="fas fa-user"></i> Name</label>
-                <input type="text" name="name" placeholder="Your full name" required>
+                <input type="text" name="name" autocomplete="name" placeholder="Your full name" maxlength="200" required>
             </div>
             <div class="form-group">
                 <label><i class="fas fa-envelope"></i> Email</label>
-                <input type="email" name="email" placeholder="your@email.com" required>
+                <input type="email" name="email" autocomplete="email" placeholder="your@email.com" maxlength="254" required>
             </div>
         </div>
         <div class="form-group">
             <label><i class="fas fa-phone"></i> Phone</label>
-            <input type="tel" name="phone" placeholder="Your phone number">
+            <input type="tel" name="phone" autocomplete="tel" maxlength="60" placeholder="Your phone number (optional)">
         </div>
         <div class="form-group">
             <label><i class="fas fa-message"></i> Message</label>
-            <textarea name="message" rows="5" placeholder="Tell us how we can help you..." required></textarea>
+            <textarea name="message" rows="5" maxlength="5000" placeholder="Tell us how we can help you..." required></textarea>
         </div>
-        <button type="submit" class="btn btn-full" style="width:auto; margin-top:16px; padding-top: 12px;">
+        <div id="contactFormFeedback" class="contact-form-feedback" role="status" aria-live="polite"></div>
+        <button type="submit" class="btn btn-full" style="width:auto; margin-top:16px; padding-top: 12px;" id="contactFormSubmit">
             <i class="fas fa-paper-plane"></i> Send Message
         </button>
     </form>
@@ -456,6 +457,9 @@
     });
 })();
 </script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
 <script type="module" src="js/index-plans.js"></script>
+<script type="module" src="js/contact-form.js"></script>
 </body>
 </html>

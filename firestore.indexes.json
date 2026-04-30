@@ -37,6 +37,20 @@
       "fields": [
         { "fieldPath": "uid", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "contactMessages",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "gymPunchSessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "checkInAt", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

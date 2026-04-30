@@ -116,6 +116,9 @@ body { font-family: 'Poppins', sans-serif; background: var(--bg); color: var(--t
             <p class="text-white-50 small">Sign in or create an account to access your dashboard</p>
         </div>
         <div class="auth-card">
+            <div id="loginGateHint" class="alert alert-info small mb-3 d-none" role="status">
+                <i class="fas fa-calendar-check me-2"></i><span id="loginGateHintText"></span>
+            </div>
             <div class="auth-tabs">
                 <button class="auth-tab active" id="loginTab">Sign In</button>
                 <button class="auth-tab" id="registerTab">Member</button>

@@ -46,9 +46,11 @@
         <div class="nav-label">Gym</div>
         <a href="#" data-section="classes"><i class="fas fa-dumbbell"></i> Classes</a>
         <a href="#" data-section="checkin"><i class="fas fa-qrcode"></i> Booking check-in</a>
+        <a href="#" data-section="punchAttendance"><i class="fas fa-clock"></i> Punch attendance</a>
         <div class="nav-divider"></div>
         <div class="nav-label">Communication</div>
         <a href="#" data-section="chat"><i class="fas fa-comments"></i> Chat with Trainers</a>
+        <a href="#" data-section="contactMessages"><i class="fas fa-envelope-open-text"></i> Contact form messages</a>
         <div class="nav-divider"></div>
         <div class="nav-label">Quick Links</div>
         <a href="index.html"><i class="fas fa-globe"></i> View Website</a>
@@ -168,7 +170,7 @@
                     <button type="button" class="btn btn-sm btn-outline-light" id="btnRefreshRefunds"><i class="fas fa-sync-alt"></i></button>
                 </div>
                 <div class="card-body">
-                    <p class="small text-muted mb-3">Members submit payout requests only from Membership (credit balance or refund owing). Approve amounts as listed; credit payouts reduce account credit—refund-owing payouts reduce the owing amount.</p>
+
                     <div class="table-responsive">
                         <table class="table table-sm mb-0">
                             <thead>
@@ -195,7 +197,7 @@
                     <button type="button" class="btn btn-sm btn-outline-light" id="btnRefreshAcctDelRequests"><i class="fas fa-sync-alt"></i></button>
                 </div>
                 <div class="card-body">
-                    <p class="small text-muted mb-3">Members request temporary closure or timed permanent deletion here. Removing the Firebase Authentication user is manual in the Firebase console.</p>
+                    
                     <div class="table-responsive">
                         <table class="table table-sm mb-0">
                             <thead>
@@ -371,6 +373,69 @@
             </div>
         </div>
 
+        <!-- ═══ PUNCH ATTENDANCE (KIOSK DATA — ADMIN ONLY) ═══ -->
+        <div class="admin-section" id="sec-punchAttendance">
+            <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+                <div>
+                    <h5 class="text-white fw-bold mb-1">Punch attendance</h5>
+                    <p class="text-muted small mb-0">Logged from the public kiosk (<code>punch.html</code>). Lists check-in / check-out times and duration.</p>
+                </div>
+                <div class="d-flex flex-wrap gap-2">
+                    <a href="punch.html" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-outline-warning">
+                        <i class="fas fa-external-link-alt me-1"></i>Open kiosk
+                    </a>
+                    <button type="button" class="btn btn-sm btn-outline-light" id="btnRefreshPunchAttendance">
+                        <i class="fas fa-sync-alt me-1"></i>Refresh
+                    </button>
+                </div>
+            </div>
+            <div class="dash-card">
+                <div class="card-body">
+                    <div class="d-flex flex-wrap gap-2 mb-3 align-items-end">
+                        <div class="flex-grow-1" style="min-width:220px;">
+                            <label class="form-label text-muted small mb-0" for="punchAdminSearch">Search</label>
+                            <input type="search" class="form-control form-control-sm" id="punchAdminSearch" placeholder="Name, email, Gym ID, or Firebase UID" autocomplete="off">
+                        </div>
+                        <div>
+                            <label class="form-label text-muted small mb-0">From</label>
+                            <input type="date" class="form-control form-control-sm" id="punchAdminFilterFrom">
+                        </div>
+                        <div>
+                            <label class="form-label text-muted small mb-0">To</label>
+                            <input type="date" class="form-control form-control-sm" id="punchAdminFilterTo">
+                        </div>
+                        <div>
+                            <label class="form-label text-muted small mb-0">Role</label>
+                            <select class="form-select form-select-sm" id="punchAdminFilterRole" style="min-width:120px;">
+                                <option value="">All</option>
+                                <option value="member">Member</option>
+                                <option value="trainer">Trainer</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="table-responsive" style="max-height:480px;">
+                        <table class="table table-sm table-dark table-striped mb-0 border border-secondary rounded overflow-hidden">
+                            <thead class="sticky-top bg-dark">
+                                <tr class="small text-muted text-uppercase">
+                                    <th>Date</th>
+                                    <th>Name</th>
+                                    <th>Role</th>
+                                    <th>Gym ID</th>
+                                    <th>Check in</th>
+                                    <th>Check out</th>
+                                    <th>Duration</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="punchAttendanceBody">
+                                <tr><td colspan="8" class="text-center text-muted py-4">Open this section to load data.</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- ═══ CHAT ═══ -->
         <div class="admin-section" id="sec-chat">
             <div class="chat-container">
@@ -392,6 +457,36 @@
                     <div class="chat-input-area d-none" id="chatInputArea">
                         <input type="text" class="form-control" id="chatInput" placeholder="Type a message…">
                         <button class="btn btn-primary btn-sm" id="btnSendChat"><i class="fas fa-paper-plane"></i></button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══ CONTACT FORM (WEBSITE) ═══ -->
+        <div class="admin-section" id="sec-contactMessages">
+            <div class="dash-card">
+                <div class="card-header">
+                    <span><i class="fas fa-envelope-open-text me-2 text-info"></i>Website contact form <small class="text-muted ms-1" id="contactMsgCount"></small></span>
+                    <button type="button" class="btn btn-sm btn-outline-light" id="btnRefreshContactMessages"><i class="fas fa-sync-alt"></i></button>
+                </div>
+                <div class="card-body">
+                    <p class="small text-muted mb-3">Messages sent from the homepage <strong>Contact</strong> section (<code>index.html#contact</code>). Newest first.</p>
+                    <div class="table-responsive">
+                        <table class="table table-sm mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Sent</th>
+                                    <th>Name</th>
+                                    <th>Email</th>
+                                    <th>Phone</th>
+                                    <th>Message</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody id="contactMessagesBody">
+                                <tr><td colspan="6" class="text-muted text-center py-4">Loading…</td></tr>
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             </div>
@@ -503,6 +598,12 @@
                     <div class="md-row">
                         <div class="md-label"><i class="fas fa-user-plus"></i> Join Date</div>
                         <div class="md-value" id="mdJoin">—</div>
+                    </div>
+                    <div class="md-row">
+                        <div class="md-label"><i class="fas fa-calendar-check"></i> Classes attended</div>
+                        <div class="md-value" id="mdClassesAttended" title="Bookings where the trainer marked the session as started">
+                            —
+                        </div>
                     </div>
                     <div class="md-row">
                         <div class="md-label"><i class="fas fa-tag"></i> Membership Type</div>

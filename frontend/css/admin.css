@@ -122,6 +122,23 @@ body { font-family: 'Poppins', sans-serif; background: var(--bg); color: var(--t
 }
 .dash-card .card-body { padding: 20px; }
 
+/* ── Punch attendance: transparent search ── */
+#sec-punchAttendance #punchAdminSearch.form-control {
+    background-color: transparent !important;
+    border-color: rgba(255, 255, 255, 0.22);
+    color: rgba(255, 255, 255, 0.95);
+    box-shadow: none;
+}
+#sec-punchAttendance #punchAdminSearch.form-control:focus {
+    background-color: rgba(255, 255, 255, 0.06) !important;
+    border-color: rgba(255, 255, 255, 0.38);
+    color: #fff;
+    box-shadow: 0 0 0 2px rgba(255, 107, 53, 0.22);
+}
+#sec-punchAttendance #punchAdminSearch.form-control::placeholder {
+    color: rgba(255, 255, 255, 0.45);
+}
+
 /* ── Table ── */
 .table { color: var(--text); --bs-table-bg: transparent; }
 .table thead th {

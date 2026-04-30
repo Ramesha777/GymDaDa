@@ -315,7 +315,11 @@ var titles = {
 
     checkin: '<i class="fas fa-qrcode me-2"></i>Booking check-in',
 
-    chat: '<i class="fas fa-comments me-2"></i>Chat'
+    chat: '<i class="fas fa-comments me-2"></i>Chat',
+
+    contactMessages: '<i class="fas fa-envelope-open-text me-2"></i>Contact messages',
+
+    punchAttendance: '<i class="fas fa-clock me-2"></i>Punch attendance'
 
 };
 
@@ -347,6 +351,8 @@ function switchSection(name) {
 
     if (name === 'classes') loadClassesAdmin();
     if (name === 'chat') loadAdminChatTrainers();
+    if (name === 'contactMessages') loadContactMessages();
+    if (name === 'punchAttendance') loadAdminPunchAttendance();
 }
 
 var sidebar = $('sidebar');
@@ -484,46 +490,92 @@ function loadOverviewStats() {
     loadOverviewAccountDeletionRequests();
 }
 
-/** Sum charged vs refunds from all members' membershipPurchases (collection group). */
+/** Sum membership ledger entries: gross counts plan face value (card + applied credit); refunds subtract cash-outs. */
+function aggregateMembershipLedgerSnaps(snapsArray) {
+    var gross = 0;
+    var refunds = 0;
+    var cur = 'GBP';
+    snapsArray.forEach(function(snap) {
+        if (!snap || !snap.forEach) return;
+        snap.forEach(function(doc) {
+            var r = doc.data();
+            var t = r.type || '';
+            if (t === 'purchase' || t === 'plan_change') {
+                var charged =
+                    typeof r.amountCharged === 'number' && !isNaN(r.amountCharged) ? r.amountCharged : 0;
+                var cred =
+                    typeof r.creditUsed === 'number' && !isNaN(r.creditUsed)
+                        ? Math.max(0, r.creditUsed)
+                        : 0;
+                var line = +(charged + cred).toFixed(2);
+                gross += line;
+                if (r.refundChoice === 'refund' && typeof r.refundOrCreditAmount === 'number') {
+                    refunds += r.refundOrCreditAmount;
+                }
+                if (r.currency && typeof r.currency === 'string' && line > 0) {
+                    cur = r.currency.trim() || cur;
+                }
+            }
+            if (t === 'admin_refund_approved' && typeof r.refundOrCreditAmount === 'number') {
+                refunds += r.refundOrCreditAmount;
+                if (r.currency && typeof r.currency === 'string') cur = r.currency.trim() || cur;
+            }
+        });
+    });
+    return {
+        gross: +gross.toFixed(2),
+        refunds: +refunds.toFixed(2),
+        currency: cur
+    };
+}
+
+function applyMembershipRevenueTotals(totals) {
+    var netEl = $('statNetRevenue');
+    var subEl = $('statRevBreakdown');
+    if (!netEl) return;
+    var net = Math.max(0, +(totals.gross - totals.refunds).toFixed(2));
+    netEl.textContent = adminFmtMoney(totals.currency, net);
+    if (subEl) {
+        subEl.textContent =
+            'Gross ' +
+            adminFmtMoney(totals.currency, totals.gross) +
+            ' \u00B7 Refunds ' +
+            adminFmtMoney(totals.currency, totals.refunds);
+    }
+}
+
+/** When collection-group queries fail (indexes / hosting), aggregate each member\u2019s subcollection — admin rule allows reads. */
+function fetchMembershipPurchasesViaMembers() {
+    return db
+        .collection('members')
+        .get()
+        .then(function(membersSnap) {
+            var tasks = [];
+            membersSnap.forEach(function(m) {
+                tasks.push(db.collection('members').doc(m.id).collection('membershipPurchases').get());
+            });
+            return Promise.all(tasks);
+        });
+}
+
 function loadOverviewMembershipRevenue() {
     var netEl = $('statNetRevenue');
     var subEl = $('statRevBreakdown');
     if (!netEl) return;
 
-    db.collectionGroup('membershipPurchases').get()
+    db.collectionGroup('membershipPurchases')
+        .get()
         .then(function(snap) {
-            var gross = 0;
-            var refunds = 0;
-            var cur = 'GBP';
-            snap.forEach(function(doc) {
-                var r = doc.data();
-                var t = r.type || '';
-                if (t === 'purchase' || t === 'plan_change') {
-                    if (typeof r.amountCharged === 'number' && !isNaN(r.amountCharged)) {
-                        gross += r.amountCharged;
-                    }
-                    if (r.refundChoice === 'refund' && typeof r.refundOrCreditAmount === 'number') {
-                        refunds += r.refundOrCreditAmount;
-                    }
-                    if (r.currency && typeof r.currency === 'string' && r.amountCharged > 0) {
-                        cur = r.currency;
-                    }
-                }
-                if (t === 'admin_refund_approved' && typeof r.refundOrCreditAmount === 'number') {
-                    refunds += r.refundOrCreditAmount;
-                    if (r.currency) cur = r.currency;
-                }
-            });
-            var net = Math.max(0, +(gross - refunds).toFixed(2));
-            netEl.textContent = adminFmtMoney(cur, net);
-            if (subEl) {
-                subEl.textContent =
-                    'Gross ' + adminFmtMoney(cur, gross) +
-                    ' \u00B7 Refunds ' + adminFmtMoney(cur, refunds);
-            }
+            applyMembershipRevenueTotals(aggregateMembershipLedgerSnaps([snap]));
         })
         .catch(function(err) {
-            console.error(err);
+            console.warn('membershipPurchases collectionGroup failed; retrying via members/*/membershipPurchases.', err);
+            return fetchMembershipPurchasesViaMembers().then(function(snapsList) {
+                applyMembershipRevenueTotals(aggregateMembershipLedgerSnaps(snapsList));
+            });
+        })
+        .catch(function(err2) {
+            console.error(err2);
             netEl.textContent = '\u2014';
             if (subEl) subEl.textContent = 'Could not load ledger';
         });
@@ -590,10 +642,11 @@ function loadOverviewRefundRequests() {
                 }
 
                 var tdAct = document.createElement('td');
+                tdAct.className = 'd-flex flex-wrap gap-1 align-items-center';
                 if (st === 'pending') {
                     var ok = document.createElement('button');
                     ok.type = 'button';
-                    ok.className = 'btn btn-sm btn-success me-1';
+                    ok.className = 'btn btn-sm btn-success';
                     ok.title =
                         (d.requestOrigin || '') === 'refund'
                             ? 'Approve payout (reduces refund owing)'
@@ -612,9 +665,16 @@ function loadOverviewRefundRequests() {
                     });
                     tdAct.appendChild(ok);
                     tdAct.appendChild(no);
-                } else {
-                    tdAct.innerHTML = '\u2014';
                 }
+                var delRf = document.createElement('button');
+                delRf.type = 'button';
+                delRf.className = 'btn btn-sm btn-outline-secondary';
+                delRf.title = 'Delete this request record';
+                delRf.innerHTML = '<i class="fas fa-trash-alt"></i>';
+                delRf.addEventListener('click', function() {
+                    deleteRefundRequestAdmin(row.id);
+                });
+                tdAct.appendChild(delRf);
 
                 tr.innerHTML =
                     '<td class="small">' + escHtml(when) + '</td>' +
@@ -784,6 +844,25 @@ function rejectRefundRequest(requestId) {
     });
 }
 
+function deleteRefundRequestAdmin(requestId) {
+    if (!requestId) return;
+    if (
+        !confirm(
+            'Permanently delete this refund request?\nThis only removes the record in Firestore; it does not automatically reverse payouts already processed.'
+        )
+    )
+        return;
+    db.collection('refundRequests')
+        .doc(requestId)
+        .delete()
+        .then(function() {
+            loadOverviewStats();
+        })
+        .catch(function(err) {
+            alert(err.message || 'Could not delete request.');
+        });
+}
+
 function adminMarkAuthAccountRemoved(requestId) {
     if (!requestId || !confirm('Confirm you removed this user from Firebase Authentication in the Firebase Console?')) return;
     db.collection('accountDeletionRequests')
@@ -798,6 +877,25 @@ function adminMarkAuthAccountRemoved(requestId) {
         })
         .catch(function(err) {
             alert(err.message || 'Could not update deletion request.');
+        });
+}
+
+function deleteAccountDeletionRequestAdmin(requestId) {
+    if (!requestId) return;
+    if (
+        !confirm(
+            'Permanently delete this account deletion request?\nThis only removes the Firestore record; it does not change Firebase Authentication by itself.'
+        )
+    )
+        return;
+    db.collection('accountDeletionRequests')
+        .doc(requestId)
+        .delete()
+        .then(function() {
+            loadOverviewStats();
+        })
+        .catch(function(err) {
+            alert(err.message || 'Could not delete deletion request.');
         });
 }
 
@@ -855,6 +953,7 @@ function loadOverviewAccountDeletionRequests() {
                                 : '<span class="badge bg-light text-dark">' + escHtml(st) + '</span>';
 
                 var tdAct = document.createElement('td');
+                tdAct.className = 'd-flex flex-wrap gap-1 align-items-start';
                 if (st === 'pending') {
                     var done = document.createElement('button');
                     done.type = 'button';
@@ -866,9 +965,16 @@ function loadOverviewAccountDeletionRequests() {
                         adminMarkAuthAccountRemoved(row.id);
                     });
                     tdAct.appendChild(done);
-                } else {
-                    tdAct.innerHTML = '\u2014';
                 }
+                var delAcct = document.createElement('button');
+                delAcct.type = 'button';
+                delAcct.className = 'btn btn-sm btn-outline-secondary';
+                delAcct.title = 'Delete request record';
+                delAcct.innerHTML = '<i class="fas fa-trash-alt"></i>';
+                delAcct.addEventListener('click', function() {
+                    deleteAccountDeletionRequestAdmin(row.id);
+                });
+                tdAct.appendChild(delAcct);
 
                 tr.innerHTML =
                     '<td class="small text-white">' + escHtml(when) + '</td>' +
@@ -1156,6 +1262,32 @@ function openMemberDetailModal(memberId) {
     }
     if ($('mdPhone')) $('mdPhone').textContent = d.phone || '—';
     if ($('mdJoin')) $('mdJoin').textContent = formatDate(d.createdAt);
+
+    if ($('mdClassesAttended')) {
+        $('mdClassesAttended').textContent = '…';
+        (function(mid) {
+            db.collection('bookings')
+                .where('memberId', '==', mid)
+                .get()
+                .then(function(bsnap) {
+                    if (currentMemberDetailId !== mid) return;
+                    var attended = 0;
+                    bsnap.forEach(function(bdoc) {
+                        var b = bdoc.data();
+                        if (b.sessionStarted === true && (b.status || 'confirmed').toLowerCase() !== 'cancelled') {
+                            attended++;
+                        }
+                    });
+                    if ($('mdClassesAttended')) $('mdClassesAttended').textContent = String(attended);
+                })
+                .catch(function(err) {
+                    console.warn('member bookings count:', err);
+                    if (currentMemberDetailId !== mid) return;
+                    if ($('mdClassesAttended')) $('mdClassesAttended').textContent = '\u2014';
+                });
+        })(memberId);
+    }
+
     if ($('mdPlanType')) {
         $('mdPlanType').innerHTML =
             (d.plan ? '<span class="badge bg-info">' + escHtml(d.plan) + '</span>' : '—') +
@@ -2469,3 +2601,274 @@ function bindAdminClassLogControls() {
 }
 
 bindAdminClassLogControls();
+
+/* ─── Website contact form messages ─── */
+function loadContactMessages() {
+    var tbody = $('contactMessagesBody');
+    var cnt = $('contactMsgCount');
+    if (!tbody) return;
+    tbody.innerHTML =
+        '<tr><td colspan="6" class="text-muted text-center py-4">Loading…</td></tr>';
+
+    function renderRows(rows) {
+        rows.sort(function(a, b) {
+            return tsSeconds(b.data.createdAt) - tsSeconds(a.data.createdAt);
+        });
+        if (cnt) cnt.textContent = '(' + rows.length + ')';
+        if (!rows.length) {
+            tbody.innerHTML =
+                '<tr><td colspan="6" class="text-muted text-center py-4">No messages yet.</td></tr>';
+            return;
+        }
+        tbody.innerHTML = '';
+        rows.forEach(function(entry) {
+            var d = entry.data;
+            var tr = document.createElement('tr');
+            tr.innerHTML =
+                '<td class="small text-nowrap">' +
+                escHtml(formatDateTime(d.createdAt)) +
+                '</td>' +
+                '<td>' +
+                escHtml(d.name || '—') +
+                '</td>' +
+                '<td class="small"><a class="link-light text-decoration-underline" href="mailto:' +
+                escHtml(d.email || '') +
+                '">' +
+                escHtml(d.email || '—') +
+                '</a></td>' +
+                '<td class="small">' +
+                escHtml(d.phone ? d.phone : '—') +
+                '</td>' +
+                '<td class="small" style="white-space:pre-wrap;max-width:300px">' +
+                escHtml(d.message || '') +
+                '</td>' +
+                '<td>' +
+                '<button type="button" class="btn btn-sm btn-outline-danger btn-del-contact-msg" data-id="' +
+                escHtml(entry.id) +
+                '" title="Delete"><i class="fas fa-trash"></i></button>' +
+                '</td>';
+            tbody.appendChild(tr);
+        });
+    }
+
+    db.collection('contactMessages')
+        .orderBy('createdAt', 'desc')
+        .limit(200)
+        .get()
+        .catch(function() {
+            return db.collection('contactMessages').limit(200).get();
+        })
+        .then(function(snap) {
+            var rows = [];
+            snap.forEach(function(doc) {
+                rows.push({ id: doc.id, data: doc.data() });
+            });
+            renderRows(rows);
+        })
+        .catch(function(err) {
+            console.error(err);
+            if (cnt) cnt.textContent = '(—)';
+            tbody.innerHTML =
+                '<tr><td colspan="6" class="text-danger text-center py-4">Could not load messages.</td></tr>';
+        });
+}
+
+if ($('contactMessagesBody')) {
+    $('contactMessagesBody').addEventListener('click', function(ev) {
+        var t = ev.target && ev.target.closest ? ev.target.closest('.btn-del-contact-msg') : null;
+        if (!t) return;
+        var id = t.getAttribute('data-id');
+        if (!id) return;
+        if (!confirm('Delete this contact message permanently?')) return;
+        db.collection('contactMessages')
+            .doc(id)
+            .delete()
+            .then(function() {
+                loadContactMessages();
+            })
+            .catch(function(err) {
+                alert(err && err.message ? err.message : 'Could not delete.');
+            });
+    });
+}
+
+if ($('btnRefreshContactMessages')) {
+    $('btnRefreshContactMessages').addEventListener('click', loadContactMessages);
+}
+
+/** Punch kiosk sessions — gymPunchSessions (admin-only list in Firestore). */
+function adminFormatPunchDur(totalMins) {
+    if (totalMins == null || isNaN(totalMins)) return '\u2014';
+    var h = Math.floor(totalMins / 60);
+    var m = totalMins % 60;
+    return h + 'h ' + String(m).padStart(2, '0') + 'm';
+}
+
+function punchAdminFmtTs(ts) {
+    if (!ts || typeof ts.toDate !== 'function') return '\u2014';
+    try {
+        return ts.toDate().toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+    } catch (e) {
+        return '\u2014';
+    }
+}
+
+var punchAttendanceCachedRows = null;
+var punchSearchDebounceTimer = null;
+
+function punchAttendanceMatchesSearch(d, rowId, qLower) {
+    if (!qLower) return true;
+    var blob = (
+        [
+            (d.displayName || ''),
+            (d.email || ''),
+            (d.gymPublicId || ''),
+            (d.subjectUid || ''),
+            rowId || '',
+            d.role || ''
+        ].join('\n')
+    ).toLowerCase();
+    return blob.indexOf(qLower) >= 0;
+}
+
+function punchAttendanceFilterRows(rows, roleF, fromK, toK, qLower) {
+    return rows.filter(function(row) {
+        var dRow = row.d;
+        if (roleF && dRow.role !== roleF) return false;
+        var dk = dRow.dateKey || '';
+        if (fromK && dk < fromK) return false;
+        if (toK && dk > toK) return false;
+        if (!punchAttendanceMatchesSearch(dRow, row.id, qLower)) return false;
+        return true;
+    });
+}
+
+function punchAttendanceRenderFilteredRows(rows) {
+    var tbody = $('punchAttendanceBody');
+    if (!tbody) return;
+    if (!rows.length) {
+        tbody.innerHTML =
+            '<tr><td colspan="8" class="text-center text-muted py-3">No sessions for this filter.</td></tr>';
+        return;
+    }
+    tbody.innerHTML = '';
+    rows.forEach(function(row) {
+        var d = row.d;
+        var tr = document.createElement('tr');
+        var st = d.status || '';
+        var outCell = punchAdminFmtTs(d.checkOutAt);
+        var dur =
+            st === 'completed' && typeof d.minutesOnSite === 'number'
+                ? adminFormatPunchDur(d.minutesOnSite)
+                : st === 'open'
+                  ? '\u2014 (open)'
+                  : '\u2014';
+        var badgeClass = st === 'open' ? 'warning text-dark' : 'success';
+        tr.innerHTML =
+            '<td>' +
+            escHtml(d.dateKey || '') +
+            '</td><td>' +
+            escHtml(d.displayName || '') +
+            '</td><td>' +
+            escHtml(d.role || '') +
+            '</td><td>' +
+            escHtml(d.gymPublicId || '') +
+            '</td><td>' +
+            escHtml(punchAdminFmtTs(d.checkInAt)) +
+            '</td><td>' +
+            escHtml(outCell) +
+            '</td><td>' +
+            escHtml(dur) +
+            '</td><td><span class="badge bg-' +
+            badgeClass +
+            '">' +
+            escHtml(st) +
+            '</span></td>';
+        tbody.appendChild(tr);
+    });
+}
+
+function loadAdminPunchAttendance(forceReload) {
+    forceReload = !!forceReload;
+    var tbody = $('punchAttendanceBody');
+    var fromEl = $('punchAdminFilterFrom');
+    var toEl = $('punchAdminFilterTo');
+    if (fromEl && toEl && !fromEl.value && !toEl.value) {
+        var now = new Date();
+        var y = now.getFullYear();
+        var m = String(now.getMonth() + 1).padStart(2, '0');
+        var day = String(now.getDate()).padStart(2, '0');
+        toEl.value = y + '-' + m + '-' + day;
+        var f = new Date(now);
+        f.setDate(f.getDate() - 14);
+        var fy = f.getFullYear();
+        var fm = String(f.getMonth() + 1).padStart(2, '0');
+        var fd = String(f.getDate()).padStart(2, '0');
+        fromEl.value = fy + '-' + fm + '-' + fd;
+    }
+
+    var roleF = ($('punchAdminFilterRole') && $('punchAdminFilterRole').value) || '';
+    var fromK = ($('punchAdminFilterFrom') && $('punchAdminFilterFrom').value) || '';
+    var toK = ($('punchAdminFilterTo') && $('punchAdminFilterTo').value) || '';
+    var qLower = (($('punchAdminSearch') && $('punchAdminSearch').value) || '').trim().toLowerCase();
+
+    if (!tbody) return;
+
+    var applyCached = function() {
+        var filtered = punchAttendanceFilterRows(punchAttendanceCachedRows, roleF, fromK, toK, qLower);
+        punchAttendanceRenderFilteredRows(filtered);
+    };
+
+    if (!forceReload && punchAttendanceCachedRows != null) {
+        applyCached();
+        return;
+    }
+
+    tbody.innerHTML =
+        '<tr><td colspan="8" class="text-center text-muted py-3">Loading\u2026</td></tr>';
+
+    db.collection('gymPunchSessions')
+        .orderBy('checkInAt', 'desc')
+        .limit(400)
+        .get()
+        .then(function(snap) {
+            var rows = [];
+            snap.forEach(function(doc) {
+                rows.push({ id: doc.id, d: doc.data() });
+            });
+            punchAttendanceCachedRows = rows;
+            var filtered = punchAttendanceFilterRows(rows, roleF, fromK, toK, qLower);
+            punchAttendanceRenderFilteredRows(filtered);
+        })
+        .catch(function(err) {
+            console.error(err);
+            punchAttendanceCachedRows = null;
+            tbody.innerHTML =
+                '<tr><td colspan="8" class="text-center text-danger py-3">Could not load punch data.</td></tr>';
+        });
+}
+
+function loadAdminPunchAttendanceDebounced() {
+    clearTimeout(punchSearchDebounceTimer);
+    punchSearchDebounceTimer = setTimeout(function() {
+        loadAdminPunchAttendance(false);
+    }, 280);
+}
+
+if ($('btnRefreshPunchAttendance')) {
+    $('btnRefreshPunchAttendance').addEventListener('click', function() {
+        loadAdminPunchAttendance(true);
+    });
+}
+if ($('punchAdminFilterRole')) $('punchAdminFilterRole').addEventListener('change', function() {
+    loadAdminPunchAttendance(false);
+});
+if ($('punchAdminFilterFrom'))
+    $('punchAdminFilterFrom').addEventListener('change', function() {
+        loadAdminPunchAttendance(false);
+    });
+if ($('punchAdminFilterTo'))
+    $('punchAdminFilterTo').addEventListener('change', function() {
+        loadAdminPunchAttendance(false);
+    });
+if ($('punchAdminSearch')) $('punchAdminSearch').addEventListener('input', loadAdminPunchAttendanceDebounced);

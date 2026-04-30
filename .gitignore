@@ -1,6 +1,6 @@
 # Firebase config (contains API keys)
 
-
+frontend/images
 # Firebase project config & security rules
 firebase.json
 firestore.rules
@@ -28,7 +28,5 @@ desktop.ini
 .firebase/
 *.log
 firebase-debug.log
-
-# images
-frontend/images/
+# frontend/images/: keep tracked — hero and markup depend on deployed static files.
 
