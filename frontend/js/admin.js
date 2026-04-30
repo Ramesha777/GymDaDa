@@ -531,6 +531,16 @@ function aggregateMembershipLedgerSnaps(snapsArray) {
 
 function applyMembershipRevenueTotals(totals) {
     var netEl = $('statNetRevenue');
+<<<<<<< HEAD
+    var grossEl = $('statGrossRevenue');
+    var refEl = $('statRefundsTotal');
+    if (!netEl && !grossEl && !refEl) return;
+    var net = Math.max(0, +(totals.gross - totals.refunds).toFixed(2));
+    var cur = totals.currency || 'GBP';
+    if (grossEl) grossEl.textContent = adminFmtMoney(cur, totals.gross);
+    if (refEl) refEl.textContent = adminFmtMoney(cur, totals.refunds);
+    if (netEl) netEl.textContent = adminFmtMoney(cur, net);
+=======
     var subEl = $('statRevBreakdown');
     if (!netEl) return;
     var net = Math.max(0, +(totals.gross - totals.refunds).toFixed(2));
@@ -542,6 +552,7 @@ function applyMembershipRevenueTotals(totals) {
             ' \u00B7 Refunds ' +
             adminFmtMoney(totals.currency, totals.refunds);
     }
+>>>>>>> 6a9eb5f935a4ed07bbc7a6f53a5297badf9a37ae
 }
 
 /** When collection-group queries fail (indexes / hosting), aggregate each member\u2019s subcollection — admin rule allows reads. */
@@ -560,8 +571,12 @@ function fetchMembershipPurchasesViaMembers() {
 
 function loadOverviewMembershipRevenue() {
     var netEl = $('statNetRevenue');
+<<<<<<< HEAD
+    if (!netEl && !$('statGrossRevenue') && !$('statRefundsTotal')) return;
+=======
     var subEl = $('statRevBreakdown');
     if (!netEl) return;
+>>>>>>> 6a9eb5f935a4ed07bbc7a6f53a5297badf9a37ae
 
     db.collectionGroup('membershipPurchases')
         .get()
@@ -576,8 +591,15 @@ function loadOverviewMembershipRevenue() {
         })
         .catch(function(err2) {
             console.error(err2);
+<<<<<<< HEAD
+            var dash = '\u2014';
+            if ($('statGrossRevenue')) $('statGrossRevenue').textContent = dash;
+            if ($('statRefundsTotal')) $('statRefundsTotal').textContent = dash;
+            if ($('statNetRevenue')) $('statNetRevenue').textContent = dash;
+=======
             netEl.textContent = '\u2014';
             if (subEl) subEl.textContent = 'Could not load ledger';
+>>>>>>> 6a9eb5f935a4ed07bbc7a6f53a5297badf9a37ae
         });
 }
 
