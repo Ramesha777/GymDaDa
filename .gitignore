@@ -6,7 +6,7 @@ firebase.json
 firestore.rules
 storage.rules
 database.rules.json
-
+firestore.indexes.json
 # Environment / secrets
 .env
 .env.*

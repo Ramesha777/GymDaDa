@@ -1,6 +1,7 @@
 import { firebaseConfig } from './firebase-config.js';
 import { getPlan, priceFor, fakeTxnId } from './plans.js';
 import { isMemberPlanActive } from './membership-utils.js';
+import { ensureGymPublicId } from './gym-public-id.js';
 
 firebase.initializeApp(firebaseConfig);
 var auth = firebase.auth();
@@ -721,6 +722,10 @@ function activatePlanInFirestore(refundChoice, refundAmount) {
         });
     }).then(function() {
         return appendMembershipLedgerEntry(ledgerCtx);
+    }).then(function() {
+        return ensureGymPublicId(db, currentUser.uid, currentUser.email || '', 'member').catch(function(e) {
+            console.warn('ensureGymPublicId (payment flow):', e);
+        });
     });
 }
 

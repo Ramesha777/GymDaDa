@@ -1,6 +1,8 @@
 import { firebaseConfig } from './firebase-config.js';
 import { isMemberPlanActive } from './membership-utils.js';
 import { getPlan } from './plans.js';
+import { ensureGymPublicId, isValidGymPublicId } from './gym-public-id.js';
+import { openIDCardModal } from './IDCard.js';
 firebase.initializeApp(firebaseConfig);
 
 var auth = firebase.auth();
@@ -10,6 +12,48 @@ var $ = function(id) { return document.getElementById(id); };
 var currentUid = null;
 var currentUser = null;
 var memberData = null;
+
+function refreshMemberGymPublicIdUi(gymPid) {
+    var side = $('sidebarGymPublicId');
+    if (side) {
+        if (gymPid && isValidGymPublicId(gymPid)) {
+            side.textContent = 'Member ID · ' + gymPid;
+            side.classList.remove('d-none');
+        } else {
+            side.textContent = '';
+            side.classList.add('d-none');
+        }
+    }
+    var heroBlk = $('profileHeroPublicIdBlock');
+    var heroCode = $('profileHeroMemberId');
+    if (heroBlk && heroCode) {
+        if (gymPid && isValidGymPublicId(gymPid)) {
+            heroBlk.classList.remove('is-pending');
+            heroCode.textContent = gymPid;
+        } else {
+            heroBlk.classList.add('is-pending');
+            heroCode.textContent = 'Assigning\u2026';
+        }
+        heroBlk.classList.remove('d-none');
+        heroBlk.hidden = false;
+    }
+    var profRo = $('memberGymPublicId');
+    if (profRo)
+        profRo.value = gymPid && isValidGymPublicId(gymPid) ? gymPid : '';
+}
+
+function runEnsureMemberGymPublicId(email) {
+    if (!currentUid || !email) return;
+    ensureGymPublicId(db, currentUid, email, 'member')
+        .then(function(pid) {
+            if (!pid || !memberData) return;
+            memberData.gymPublicId = pid;
+            refreshMemberGymPublicIdUi(pid);
+        })
+        .catch(function(err) {
+            console.warn('Gym public ID:', err && err.message ? err.message : err);
+        });
+}
 
 /**
  * Without membership: one active class booking at a time; after trainer starts session (completed), no more until they buy a plan.
@@ -62,13 +106,41 @@ auth.onAuthStateChanged(function(user) {
         if (doc === undefined) return;
         memberData = doc.exists ? doc.data() : {};
         showDashboard(user);
+        runEnsureMemberGymPublicId(user.email || '');
     }).catch(function() { window.location.href = 'login.html'; });
 });
+
+/** Sidebar footer: show member name (not raw email). */
+function syncMemberSidebarFooterName(user) {
+    var el = $('userEmail');
+    if (!el || !user) return;
+    var nm =
+        memberData &&
+        typeof memberData.displayName === 'string' &&
+        memberData.displayName.trim()
+            ? memberData.displayName.trim()
+            : '';
+    if (!nm && user.displayName && String(user.displayName).trim()) {
+        nm = String(user.displayName).trim();
+    }
+    if (!nm && user.email && user.email.indexOf('@') > 0) {
+        nm = user.email.split('@')[0];
+    }
+    if (!nm) nm = 'Member';
+    el.textContent = nm;
+    if (user.email) el.title = user.email;
+    else el.removeAttribute('title');
+}
 
 function showDashboard(user) {
     $('loadingGate').style.display = 'none';
     $('mainContent').style.display = 'block';
-    $('userEmail').textContent = user.email;
+    syncMemberSidebarFooterName(user);
+    refreshMemberGymPublicIdUi(
+        memberData && memberData.gymPublicId && isValidGymPublicId(memberData.gymPublicId)
+            ? memberData.gymPublicId
+            : ''
+    );
     loadProfile();
     loadClasses();
 }
@@ -161,6 +233,8 @@ function loadProfile() {
             if ($('profileHeroEmail')) $('profileHeroEmail').textContent = currentUser.email;
             if ($('profileHeroName')) $('profileHeroName').textContent = 'New member';
             renderProfileAvatar('', currentUser.email, '');
+            refreshMemberGymPublicIdUi(null);
+            syncMemberSidebarFooterName(currentUser);
             return;
         }
         var d = doc.data();
@@ -190,6 +264,13 @@ function loadProfile() {
         }
         $('profPlan').innerHTML = planLabel + planBadge;
         if ($('profileStatus')) $('profileStatus').innerHTML = '';
+        refreshMemberGymPublicIdUi(
+            memberData.gymPublicId && isValidGymPublicId(memberData.gymPublicId) ? memberData.gymPublicId : ''
+        );
+        syncMemberSidebarFooterName(currentUser);
+        if (!(memberData.gymPublicId && isValidGymPublicId(memberData.gymPublicId)) && currentUser && currentUser.email) {
+            runEnsureMemberGymPublicId(currentUser.email);
+        }
     });
 }
 
@@ -215,6 +296,46 @@ $('profileForm').addEventListener('submit', function(e) {
         loadProfile();
     }).catch(function(err) { showAlert($('profileAlert'), err.message, 'danger'); });
 });
+
+/** Line shown on digital ID card (matches dashboard membership wording). */
+function formatMemberIdCardMembershipStatus(d) {
+    if (!d || !d.planId) return 'No active membership';
+    var planLabel = (d.plan && String(d.plan).trim()) || 'Membership';
+    if (d.planPeriod) planLabel += ' · ' + (d.planPeriod === 'yearly' ? 'Yearly' : 'Monthly');
+    var access = isMemberPlanActive(d);
+    if (access && d.cancelAtPeriodEnd) return planLabel + ' — Active · not renewing';
+    if (access) return planLabel + ' — Active';
+    if (d.planStatus === 'expired') return planLabel + ' — Expired';
+    return planLabel + ' — Inactive';
+}
+
+var btnGenerateIdCard = $('btnGenerateIdCard');
+if (btnGenerateIdCard) {
+    btnGenerateIdCard.addEventListener('click', function() {
+        if (!currentUser) return;
+        var d = memberData || {};
+        var nm =
+            (d.displayName && String(d.displayName).trim()) ||
+            (currentUser.displayName && String(currentUser.displayName).trim()) ||
+            '';
+        if (!nm && currentUser.email) nm = currentUser.email.split('@')[0];
+        if (!nm) nm = 'Member';
+        var pid =
+            d.gymPublicId && isValidGymPublicId(d.gymPublicId) ? d.gymPublicId : '';
+        openIDCardModal({
+            name: nm,
+            role: 'member',
+            joinDate: d.createdAt || null,
+            photoURL: (d.photoURL && String(d.photoURL).trim()) || (currentUser.photoURL || '') || '',
+            userId: pid || currentUser.uid,
+            phone: (d.phone && String(d.phone).trim()) || '',
+            membershipStatus: formatMemberIdCardMembershipStatus(d),
+            gymLocation: 'RA1 2SU, 7 Krishal Road',
+            gymWebsiteUrl: 'https://dadagym.netlify.app',
+            gymWebsiteLabel: 'dadagym.netlify.app'
+        });
+    });
+}
 
 var photoInput = $('profPhotoURL');
 if (photoInput) {

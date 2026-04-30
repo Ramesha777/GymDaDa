@@ -4,6 +4,8 @@
 
 import { firebaseConfig } from './firebase-config.js';
 import { isMemberPlanActive } from './membership-utils.js';
+import { ensureGymPublicId, isValidGymPublicId } from './gym-public-id.js';
+import { openIDCardModal } from './IDCard.js';
 
 firebase.initializeApp(firebaseConfig);
 
@@ -132,11 +134,80 @@ function bigAvatarInto(boxId, initialsId, name, email, photoURL) {
     }
 }
 
+function refreshAdminGymPublicIdUi(gymPid) {
+    var idEl = $('adminGymPublicId');
+    if (!idEl) return;
+    if (gymPid && isValidGymPublicId(gymPid)) {
+        idEl.textContent = 'Admin ID · ' + gymPid;
+        idEl.classList.remove('d-none');
+    } else {
+        idEl.textContent = '';
+        idEl.classList.add('d-none');
+    }
+}
+
 /* ─── Auth + boot ─── */
+function syncAdminSidebarFooterName(user) {
+    var el = $('adminEmail');
+    if (!el || !user) return;
+
+    db.collection('users')
+        .doc(user.uid)
+        .get()
+        .then(function(uDoc) {
+            var nm = '';
+            var ud = uDoc.exists ? uDoc.data() : {};
+            if (uDoc.exists) {
+                if (ud.displayName && String(ud.displayName).trim()) {
+                    nm = String(ud.displayName).trim();
+                }
+            }
+            if (!nm && user.displayName && String(user.displayName).trim()) {
+                nm = String(user.displayName).trim();
+            }
+            if (!nm && user.email && user.email.indexOf('@') > 0) {
+                nm = user.email.split('@')[0];
+            }
+            if (!nm) nm = 'Admin';
+            el.textContent = nm;
+            if (user.email) el.title = user.email;
+            else el.removeAttribute('title');
+
+            var existingPid = ud.gymPublicId && isValidGymPublicId(ud.gymPublicId) ? ud.gymPublicId : '';
+            refreshAdminGymPublicIdUi(existingPid);
+            if (!existingPid && user.email) {
+                ensureGymPublicId(db, user.uid, user.email, 'admin')
+                    .then(function(newPid) {
+                        if (newPid) refreshAdminGymPublicIdUi(newPid);
+                    })
+                    .catch(function(err) {
+                        console.warn('Gym public ID:', err && err.message ? err.message : err);
+                    });
+            }
+        })
+        .catch(function() {
+            var nm =
+                user.displayName && String(user.displayName).trim()
+                    ? String(user.displayName).trim()
+                    : '';
+            if (!nm && user.email && user.email.indexOf('@') > 0) nm = user.email.split('@')[0];
+            el.textContent = nm || 'Admin';
+            if (user.email) el.title = user.email;
+            refreshAdminGymPublicIdUi('');
+            if (user.email) {
+                ensureGymPublicId(db, user.uid, user.email, 'admin')
+                    .then(function(newPid) {
+                        if (newPid) refreshAdminGymPublicIdUi(newPid);
+                    })
+                    .catch(function() {});
+            }
+        });
+}
+
 function showDashboard(user) {
     $('loadingGate').style.display = 'none';
     $('mainContent').style.display = 'block';
-    if ($('adminEmail')) $('adminEmail').textContent = user.email || '';
+    syncAdminSidebarFooterName(user);
     loadOverviewStats();
     loadAllMembers();
     loadTrainerApplications();
@@ -175,6 +246,53 @@ auth.onAuthStateChanged(function(user) {
 if ($('btnLogout')) {
     $('btnLogout').addEventListener('click', function() {
         auth.signOut().then(function() { window.location.href = 'login.html'; });
+    });
+}
+
+if ($('btnGenerateAdminIdCard')) {
+    $('btnGenerateAdminIdCard').addEventListener('click', function() {
+        if (!currentUser) return;
+        db.collection('users')
+            .doc(currentUser.uid)
+            .get()
+            .then(function(uDoc) {
+                var ud = uDoc.exists ? uDoc.data() : {};
+                var nm =
+                    (ud.displayName && String(ud.displayName).trim()) ||
+                    (currentUser.displayName && String(currentUser.displayName).trim()) ||
+                    '';
+                if (!nm && currentUser.email) nm = currentUser.email.split('@')[0];
+                if (!nm) nm = 'Admin';
+                var pid =
+                    ud.gymPublicId && isValidGymPublicId(ud.gymPublicId) ? ud.gymPublicId : '';
+                openIDCardModal({
+                    name: nm,
+                    role: 'admin',
+                    joinDate: ud.createdAt || null,
+                    photoURL:
+                        (ud.photoURL && String(ud.photoURL).trim()) ||
+                        (currentUser.photoURL || '') ||
+                        '',
+                    userId: pid || currentUser.uid,
+                    phone: (ud.phone && String(ud.phone).trim()) || '',
+                    gymLocation: 'RA1 2SU, 7 Krishal Road',
+                    gymWebsiteUrl: 'https://dadagym.netlify.app',
+                    gymWebsiteLabel: 'dadagym.netlify.app'
+                });
+            })
+            .catch(function() {
+                openIDCardModal({
+                    name: currentUser.displayName || (currentUser.email || 'Admin').split('@')[0],
+                    role: 'admin',
+                    joinDate: null,
+                    photoURL: currentUser.photoURL || '',
+                    userId: currentUser.uid,
+                    phone: '',
+                    gymLocation: 'RA1 2SU, 7 Krishal Road',
+                    gymWebsiteUrl: 'https://dadagym.netlify.app',
+                    gymWebsiteLabel: 'dadagym.netlify.app'
+                });
+            });
     });
 }
 
@@ -968,11 +1086,16 @@ function renderMembersGrid() {
         var currSym = adminCurrencySym(d.planCurrency || 'GBP');
         var cBal = typeof d.planCredit === 'number' ? d.planCredit : 0;
         var rOwes = typeof d.lastRefundAmount === 'number' ? d.lastRefundAmount : 0;
+        var pubLine =
+            d.gymPublicId && isValidGymPublicId(d.gymPublicId)
+                ? '<div class="small text-white-50 font-monospace mb-1">' + escHtml(d.gymPublicId) + '</div>'
+                : '';
         col.innerHTML =
             '<div class="dash-card h-100 member-card" tabindex="0" data-id="' + item.id + '">' +
                 '<div class="card-body text-center">' +
                     avatar +
                     '<h6 class="text-white fw-bold mt-2 mb-1">' + escHtml(name) + '</h6>' +
+                    pubLine +
                     '<span class="badge bg-info">' + planLabel + '</span>' +
                     '<div class="member-card-money small mt-2 text-muted">' +
                     escHtml('Credit ' + currSym + Math.max(0, cBal).toFixed(2)) +
@@ -1027,6 +1150,10 @@ function openMemberDetailModal(memberId) {
             (d.planPeriod ? ' · ' + (d.planPeriod === 'yearly' ? 'Yearly' : 'Monthly') : '');
     }
     if ($('mdEmail')) $('mdEmail').textContent = email;
+    if ($('mdGymPublicId')) {
+        $('mdGymPublicId').textContent =
+            d.gymPublicId && isValidGymPublicId(d.gymPublicId) ? d.gymPublicId : '\u2014';
+    }
     if ($('mdPhone')) $('mdPhone').textContent = d.phone || '—';
     if ($('mdJoin')) $('mdJoin').textContent = formatDate(d.createdAt);
     if ($('mdPlanType')) {
@@ -1217,6 +1344,10 @@ function openTrainerDetailModal(trainerId) {
             (d.experience != null ? ' · ' + d.experience + ' yrs experience' : '');
     }
     if ($('tdEmail')) $('tdEmail').textContent = email;
+    if ($('tdGymPublicId')) {
+        $('tdGymPublicId').textContent =
+            d.gymPublicId && isValidGymPublicId(d.gymPublicId) ? d.gymPublicId : '\u2014';
+    }
     if ($('tdPhone')) $('tdPhone').textContent = d.phone || '—';
     if ($('tdSpec')) $('tdSpec').textContent = d.specialization || '—';
     if ($('tdExp')) $('tdExp').textContent = d.experience != null ? d.experience + ' year(s)' : '—';

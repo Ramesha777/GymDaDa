@@ -11,6 +11,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap" rel="stylesheet">
 <link rel="icon" type="image/x-icon" href="images/logo.png">
 <link rel="stylesheet" href="CSS/admin.css">
+<link rel="stylesheet" href="CSS/id-card.css">
 </head>
 <body>
 
@@ -55,6 +56,10 @@
     </nav>
     <div class="sidebar-footer">
         <span class="admin-email" id="adminEmail"></span>
+        <span class="admin-gym-public-id small text-muted mb-2 d-none" id="adminGymPublicId"></span>
+        <button type="button" class="btn btn-outline-secondary btn-sm w-100 mb-2" id="btnGenerateAdminIdCard">
+            <i class="fas fa-id-card me-1"></i>Generate ID Card
+        </button>
         <button class="btn btn-outline-warning btn-sm w-100" id="btnLogout"><i class="fas fa-sign-out-alt me-1"></i>Log Out</button>
     </div>
 </aside>
@@ -484,6 +489,10 @@
 
                 <div class="member-detail-grid">
                     <div class="md-row">
+                        <div class="md-label"><i class="fas fa-id-badge"></i> Member ID</div>
+                        <div class="md-value font-monospace" id="mdGymPublicId">—</div>
+                    </div>
+                    <div class="md-row">
                         <div class="md-label"><i class="fas fa-envelope"></i> Email</div>
                         <div class="md-value" id="mdEmail">—</div>
                     </div>
@@ -550,6 +559,10 @@
                 </div>
 
                 <div class="member-detail-grid">
+                    <div class="md-row">
+                        <div class="md-label"><i class="fas fa-id-badge"></i> Tutor ID</div>
+                        <div class="md-value font-monospace" id="tdGymPublicId">—</div>
+                    </div>
                     <div class="md-row">
                         <div class="md-label"><i class="fas fa-envelope"></i> Email</div>
                         <div class="md-value" id="tdEmail">—</div>

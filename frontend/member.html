@@ -11,6 +11,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap" rel="stylesheet">
 <link rel="icon" type="image/x-icon" href="images/logo.png">
 <link rel="stylesheet" href="CSS/member.css">
+<link rel="stylesheet" href="CSS/id-card.css">
 </head>
 <body>
 
@@ -39,6 +40,7 @@
     </nav>
     <div class="sidebar-footer">
         <span class="user-email" id="userEmail"></span>
+        <span class="sidebar-gym-public-id small d-none text-muted mb-2" id="sidebarGymPublicId"></span>
         <button class="btn btn-outline-warning btn-sm w-100" id="btnLogout"><i class="fas fa-sign-out-alt me-1"></i>Log Out</button>
     </div>
 </aside>
@@ -72,6 +74,10 @@
                                 <div class="profile-hero-info">
                                     <div class="profile-hero-name" id="profileHeroName">—</div>
                                     <div class="profile-hero-email" id="profileHeroEmail">—</div>
+                                    <div class="profile-hero-public-id" id="profileHeroPublicIdBlock" aria-live="polite">
+                                        <span class="profile-hero-public-id-label">Member ID</span>
+                                        <span class="profile-hero-public-id-code font-monospace" id="profileHeroMemberId"></span>
+                                    </div>
                                 </div>
                             </div>
 
@@ -100,11 +106,20 @@
                                         <input type="email" class="form-control" id="profEmail" readonly disabled>
                                     </div>
                                     <div class="col-md-6">
+                                        <label class="form-label">Member ID</label>
+                                        <input type="text" class="form-control font-monospace" id="memberGymPublicId" readonly disabled value="" placeholder="Assigning…">
+                                    </div>
+                                    <div class="col-12">
                                         <label class="form-label">Current Plan</label>
                                         <p class="form-control-plaintext text-white fw-semibold" id="profPlan">—</p>
                                     </div>
                                 </div>
-                                <button type="submit" class="btn btn-primary mt-3">Save Profile</button>
+                                <div class="d-flex flex-wrap align-items-center gap-2 mt-3">
+                                    <button type="submit" class="btn btn-primary">Save Profile</button>
+                                    <button type="button" class="btn btn-outline-secondary" id="btnGenerateIdCard">
+                                        <i class="fas fa-id-card me-2"></i>Generate ID Card
+                                    </button>
+                                </div>
                             </form>
                         </div>
                     </div>

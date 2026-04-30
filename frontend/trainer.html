@@ -11,6 +11,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap" rel="stylesheet">
 <link rel="icon" type="image/x-icon" href="images/logo.png">
 <link rel="stylesheet" href="CSS/trainer.css">
+<link rel="stylesheet" href="CSS/id-card.css">
 </head>
 <body>
 
@@ -47,6 +48,7 @@
     </nav>
     <div class="sidebar-footer">
         <span class="user-email" id="userEmail"></span>
+        <span class="sidebar-gym-public-id small d-none text-muted mb-2" id="sidebarGymPublicId"></span>
         <button class="btn btn-outline-warning btn-sm w-100" id="btnLogout"><i class="fas fa-sign-out-alt me-1"></i>Log Out</button>
     </div>
 </aside>
@@ -129,6 +131,10 @@
                                 <div class="profile-hero-info">
                                     <div class="profile-hero-name" id="trainerHeroName">—</div>
                                     <div class="profile-hero-email" id="trainerHeroEmail">—</div>
+                                    <div class="profile-hero-public-id" id="trainerHeroPublicIdBlock" aria-live="polite">
+                                        <span class="profile-hero-public-id-label">Tutor ID</span>
+                                        <span class="profile-hero-public-id-code font-monospace" id="trainerHeroPublicId"></span>
+                                    </div>
                                 </div>
                             </div>
 
@@ -153,6 +159,10 @@
                                         <input type="email" class="form-control" id="tProfEmail" readonly disabled>
                                     </div>
                                     <div class="col-md-6">
+                                        <label class="form-label">Tutor ID</label>
+                                        <input type="text" class="form-control font-monospace" id="trainerGymPublicId" readonly disabled placeholder="Assigning…">
+                                    </div>
+                                    <div class="col-md-12">
                                         <label class="form-label">Specialization</label>
                                         <input type="text" class="form-control" id="tProfSpec" readonly disabled>
                                     </div>
@@ -169,7 +179,12 @@
                                         <textarea class="form-control" id="tProfBio" rows="2"></textarea>
                                     </div>
                                 </div>
-                                <button type="submit" class="btn btn-primary mt-3">Update Profile</button>
+                                <div class="d-flex flex-wrap align-items-center gap-2 mt-3">
+                                    <button type="submit" class="btn btn-primary">Update Profile</button>
+                                    <button type="button" class="btn btn-outline-secondary" id="btnGenerateTrainerIdCard">
+                                        <i class="fas fa-id-card me-2"></i>Generate ID Card
+                                    </button>
+                                </div>
                             </form>
                         </div>
                     </div>

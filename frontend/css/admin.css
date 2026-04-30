@@ -66,7 +66,8 @@ body { font-family: 'Poppins', sans-serif; background: var(--bg); color: var(--t
     border-top: 1px solid var(--border);
     font-size: 13px;
 }
-.sidebar-footer .admin-email { color: var(--muted); word-break: break-all; display: block; margin-bottom: 8px; }
+.sidebar-footer .admin-email { color: var(--muted); word-break: break-all; display: block; margin-bottom: 4px; }
+.sidebar-footer .admin-gym-public-id { display: block; letter-spacing: 0.04em; color: rgba(255,255,255,0.55) !important; }
 
 /* ── Main ── */
 .main { margin-left: var(--sidebar-w); min-height: 100vh; }

@@ -4,6 +4,8 @@
 
 import { firebaseConfig } from './firebase-config.js';
 import { isMemberPlanActive } from './membership-utils.js';
+import { ensureGymPublicId, isValidGymPublicId } from './gym-public-id.js';
+import { openIDCardModal } from './IDCard.js';
 
 firebase.initializeApp(firebaseConfig);
 
@@ -22,6 +24,47 @@ var trainerClassTrackWeekOffset = 0;
 var trainerSessionLogModalInst = null;
 var trainerSessionLogContext = null;
 
+function refreshTrainerGymPublicIdUi(gymPid) {
+    var side = $('sidebarGymPublicId');
+    if (side) {
+        if (gymPid && isValidGymPublicId(gymPid)) {
+            side.textContent = 'Tutor ID · ' + gymPid;
+            side.classList.remove('d-none');
+        } else {
+            side.textContent = '';
+            side.classList.add('d-none');
+        }
+    }
+    var heroBlk = $('trainerHeroPublicIdBlock');
+    var heroCode = $('trainerHeroPublicId');
+    if (heroBlk && heroCode) {
+        if (gymPid && isValidGymPublicId(gymPid)) {
+            heroBlk.classList.remove('is-pending');
+            heroCode.textContent = gymPid;
+        } else {
+            heroBlk.classList.add('is-pending');
+            heroCode.textContent = 'Assigning\u2026';
+        }
+        heroBlk.classList.remove('d-none');
+        heroBlk.hidden = false;
+    }
+    var prof = $('trainerGymPublicId');
+    if (prof) prof.value = gymPid && isValidGymPublicId(gymPid) ? gymPid : '';
+}
+
+function runEnsureTrainerGymPublicId(email) {
+    if (!currentUid || !email) return;
+    ensureGymPublicId(db, currentUid, email, 'trainer')
+        .then(function(pid) {
+            if (!pid) return;
+            if (trainerData) trainerData.gymPublicId = pid;
+            refreshTrainerGymPublicIdUi(pid);
+        })
+        .catch(function(err) {
+            console.warn('Gym public ID:', err && err.message ? err.message : err);
+        });
+}
+
 function escHtml(s) {
     if (s == null || s === '') return '';
     var d = document.createElement('div');
@@ -29,10 +72,33 @@ function escHtml(s) {
     return d.innerHTML;
 }
 
+function syncTrainerSidebarFooterName(user) {
+    var el = $('userEmail');
+    if (!el || !user) return;
+    var d = trainerData || {};
+    var nm =
+        typeof d.displayName === 'string' && d.displayName.trim() ? d.displayName.trim() : '';
+    if (!nm && user.displayName && String(user.displayName).trim()) {
+        nm = String(user.displayName).trim();
+    }
+    if (!nm && user.email && user.email.indexOf('@') > 0) {
+        nm = user.email.split('@')[0];
+    }
+    if (!nm) nm = 'Trainer';
+    el.textContent = nm;
+    if (user.email) el.title = user.email;
+    else el.removeAttribute('title');
+}
+
 function showDashboard(user) {
     $('loadingGate').style.display = 'none';
     $('mainContent').style.display = 'block';
-    if ($('userEmail')) $('userEmail').textContent = user.email || '';
+    syncTrainerSidebarFooterName(user);
+    refreshTrainerGymPublicIdUi(
+        trainerData && trainerData.gymPublicId && isValidGymPublicId(trainerData.gymPublicId)
+            ? trainerData.gymPublicId
+            : ''
+    );
     loadTrainerProfile(user.uid);
     loadTrainerOverviewStats();
     loadTrainerClasses();
@@ -51,6 +117,7 @@ auth.onAuthStateChanged(function(user) {
             window.location.href = 'login.html';
             return;
         }
+        trainerData = doc.data() || {};
         showDashboard(user);
     }).catch(function() {
         window.location.href = 'login.html';
@@ -181,6 +248,14 @@ function loadTrainerProfile(uid) {
                     '<span class="badge bg-' + (colors[status] || 'secondary') + '">' +
                     status.charAt(0).toUpperCase() + status.slice(1) + '</span>';
             }
+            if (currentUser) syncTrainerSidebarFooterName(currentUser);
+            refreshTrainerGymPublicIdUi(
+                d.gymPublicId && isValidGymPublicId(d.gymPublicId) ? d.gymPublicId : ''
+            );
+            var em = d.email || (currentUser && currentUser.email) || '';
+            if (!(d.gymPublicId && isValidGymPublicId(d.gymPublicId)) && em) {
+                runEnsureTrainerGymPublicId(em);
+            }
         });
 }
 
@@ -227,6 +302,34 @@ if (trainerForm) {
                     a.classList.remove('d-none');
                 }
             });
+    });
+}
+
+var btnGenerateTrainerIdCard = $('btnGenerateTrainerIdCard');
+if (btnGenerateTrainerIdCard) {
+    btnGenerateTrainerIdCard.addEventListener('click', function() {
+        if (!currentUser) return;
+        var d = trainerData || {};
+        var nm =
+            (d.displayName && String(d.displayName).trim()) ||
+            (currentUser.displayName && String(currentUser.displayName).trim()) ||
+            '';
+        if (!nm && currentUser.email) nm = currentUser.email.split('@')[0];
+        if (!nm) nm = 'Trainer';
+        var pid =
+            d.gymPublicId && isValidGymPublicId(d.gymPublicId) ? d.gymPublicId : '';
+        openIDCardModal({
+            name: nm,
+            role: 'trainer',
+            joinDate: d.createdAt || null,
+            photoURL: (d.photoURL && String(d.photoURL).trim()) || (currentUser.photoURL || '') || '',
+            userId: pid || currentUser.uid,
+            phone: (d.phone && String(d.phone).trim()) || '',
+            specialization: (d.specialization && String(d.specialization).trim()) || '',
+            gymLocation: 'RA1 2SU, 7 Krishal Road',
+            gymWebsiteUrl: 'https://dadagym.netlify.app',
+            gymWebsiteLabel: 'dadagym.netlify.app'
+        });
     });
 }
 
