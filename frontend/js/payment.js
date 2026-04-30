@@ -1,5 +1,6 @@
 import { firebaseConfig } from './firebase-config.js';
 import { getPlan, priceFor, fakeTxnId } from './plans.js';
+import { isMemberPlanActive } from './membership-utils.js';
 
 firebase.initializeApp(firebaseConfig);
 var auth = firebase.auth();
@@ -86,7 +87,7 @@ function routeMember(user) {
     db.collection('members').doc(user.uid).get().then(function(doc) {
         memberData = doc.exists ? (doc.data() || {}) : {};
 
-        if (isPlanStillActive(memberData)) {
+        if (isMemberPlanActive(memberData)) {
             if (memberData.planId === plan.id) {
                 showSamePlanState();
                 return;
@@ -101,12 +102,6 @@ function routeMember(user) {
         memberData = {};
         revealCheckout();
     });
-}
-
-function isPlanStillActive(d) {
-    if (!d || d.planStatus !== 'active' || !d.planId) return false;
-    if (!d.planExpiresAt || !d.planExpiresAt.toMillis) return true;
-    return d.planExpiresAt.toMillis() > Date.now();
 }
 
 /* ─── Show / hide top-level page sections ─── */
@@ -208,10 +203,19 @@ function initCheckout() {
     bindPeriodToggle();
     bindMethodTabs();
     bindCardInputs();
+    bindCreditCheckbox();
     bindPurchase();
     bindModal();
     bindPlanChangeConfirm();
     bindRefundChoice();
+}
+
+function bindCreditCheckbox() {
+    var chk = $('chkApplyAccountCredit');
+    if (!chk) return;
+    chk.addEventListener('change', function() {
+        updateTotals();
+    });
 }
 
 function bindPlanChangeConfirm() {
@@ -245,8 +249,33 @@ function renderPlan() {
 
 function updateTotals() {
     var p = priceFor(plan, period);
-    var availCredit = (memberData && typeof memberData.planCredit === 'number') ? memberData.planCredit : 0;
-    creditUsed = Math.max(0, Math.min(availCredit, p.total));
+    var availCredit = memberData && typeof memberData.planCredit === 'number' ? Math.max(0, memberData.planCredit) : 0;
+    var chk = $('chkApplyAccountCredit');
+    var promptBox = $('creditPromptBox');
+    var promptText = $('creditPromptText');
+    var promptFoot = $('creditPromptFoot');
+    var wantCredit = !!(chk && chk.checked);
+
+    if (availCredit > 0) {
+        var maxApply = +(Math.min(availCredit, p.total)).toFixed(2);
+        if (promptBox) promptBox.hidden = false;
+        if (promptText) {
+            promptText.innerHTML =
+                'You have <strong>' + fmt(availCredit) + '</strong> in account credit from a previous refund or adjustment. ' +
+                'Choose whether to apply it to this order (up to <strong>' + fmt(maxApply) + '</strong> for this plan).';
+        }
+        if (promptFoot) {
+            promptFoot.textContent = wantCredit
+                ? 'Applied amount cannot exceed your order total. Remaining credit stays on your account.'
+                : 'Check the box to reduce what you pay now using your saved credit (up to the order total).';
+        }
+        creditUsed = wantCredit ? maxApply : 0;
+    } else {
+        if (promptBox) promptBox.hidden = true;
+        if (chk) chk.checked = false;
+        creditUsed = 0;
+    }
+
     creditUsed = +creditUsed.toFixed(2);
     var totalDue = +(p.total - creditUsed).toFixed(2);
 
@@ -418,7 +447,7 @@ function validateVisa() {
  * 0 if N/A — same plan, expired, or no plan.
  */
 function computeRefund() {
-    if (!isPlanStillActive(memberData)) return 0;
+    if (!isMemberPlanActive(memberData)) return 0;
     if (memberData.planId === plan.id) return 0;
 
     var paid = +memberData.planAmountTotal || 0;
@@ -476,6 +505,8 @@ function ensureSignedIn() {
 
 /** Step 1: spinner on Purchase btn → open modal in REVIEW mode. */
 function runSimulation() {
+    updateTotals();
+
     var btn = $('btnPurchase');
     btn.disabled = true;
     qs('.pay-btn-label', btn).hidden = true;
@@ -568,6 +599,51 @@ function setModalError(msg) {
     el.hidden = false;
 }
 
+/** Calendar month/year from checkout moment — matches “monthly / yearly” wording. */
+function computeMembershipExpiryTimestamp(billingPeriod) {
+    var d = new Date();
+    if (billingPeriod === 'yearly') {
+        d.setFullYear(d.getFullYear() + 1);
+    } else {
+        d.setMonth(d.getMonth() + 1);
+    }
+    return firebase.firestore.Timestamp.fromDate(d);
+}
+
+/**
+ * Persist a row for the member dashboard purchase history table.
+ */
+function appendMembershipLedgerEntry(ctx) {
+    if (!currentUser || !plan || !pendingPurchase) return Promise.resolve();
+
+    var entryType = 'purchase';
+    if (ctx.hadActiveAccess && ctx.previousPlanId && ctx.previousPlanId !== plan.id) {
+        entryType = 'plan_change';
+    }
+
+    var rec = {
+        memberId: currentUser.uid,
+        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        type: entryType,
+        planId: plan.id,
+        planName: plan.name,
+        period: period,
+        currency: plan.currency,
+        amountCharged: pendingPurchase.amountCharged,
+        txnId: pendingPurchase.txn || '',
+        creditUsed: typeof creditUsed === 'number' ? creditUsed : 0,
+        planCreditAfter: ctx.newCredit,
+        planExpiresAt: ctx.expiresAt,
+        paymentSimulated: true
+    };
+    if (ctx.previousPlanId) rec.previousPlanId = ctx.previousPlanId;
+    if (ctx.refundAmount > 0) {
+        rec.refundOrCreditAmount = ctx.refundAmount;
+        rec.refundChoice = ctx.refundChoice;
+    }
+    return db.collection('members').doc(currentUser.uid).collection('membershipPurchases').add(rec);
+}
+
 /**
  * Single source of truth for writing the active plan + refund / credit
  * bookkeeping to Firestore.  Only ever touches fields the rules permit.
@@ -575,15 +651,24 @@ function setModalError(msg) {
 function activatePlanInFirestore(refundChoice, refundAmount) {
     if (!currentUser) return Promise.reject(new Error('Not signed in'));
 
+    var ledgerCtx = {
+        previousPlanId: memberData.planId || null,
+        hadActiveAccess: isMemberPlanActive(memberData),
+        refundChoice: refundChoice,
+        refundAmount: typeof refundAmount === 'number' ? refundAmount : 0,
+        newCredit: 0,
+        expiresAt: null
+    };
+
     var fullPrice = pendingPurchase.price;
-    var nowMs = Date.now();
-    var durationMs = period === 'yearly' ? 365 * 86400000 : 30 * 86400000;
-    var expiresAt = firebase.firestore.Timestamp.fromMillis(nowMs + durationMs);
+    var expiresAt = computeMembershipExpiryTimestamp(period);
+    ledgerCtx.expiresAt = expiresAt;
 
     var oldCredit = (typeof memberData.planCredit === 'number') ? memberData.planCredit : 0;
     var newCredit = oldCredit - creditUsed;
     if (refundChoice === 'credit' && refundAmount > 0) newCredit += refundAmount;
     newCredit = Math.max(0, +newCredit.toFixed(2));
+    ledgerCtx.newCredit = newCredit;
 
     var update = {
         plan: plan.name,
@@ -604,7 +689,10 @@ function activatePlanInFirestore(refundChoice, refundAmount) {
         lastCreditUsed: creditUsed,
         lastPaymentSimulated: true,
 
-        planCredit: newCredit
+        planCredit: newCredit,
+
+        cancelAtPeriodEnd: firebase.firestore.FieldValue.delete(),
+        membershipCancelledAt: firebase.firestore.FieldValue.delete()
     };
 
     if (refundChoice === 'refund' && refundAmount > 0) {
@@ -628,10 +716,11 @@ function activatePlanInFirestore(refundChoice, refundAmount) {
         update.createdAt = firebase.firestore.FieldValue.serverTimestamp();
         return ref.set(update);
     }).then(function() {
-        // Refresh local cache so any subsequent UI is in sync
         return ref.get().then(function(d) {
             memberData = d.exists ? (d.data() || {}) : {};
         });
+    }).then(function() {
+        return appendMembershipLedgerEntry(ledgerCtx);
     });
 }
 

@@ -300,6 +300,54 @@ a { color: inherit; text-decoration: none; }
 }
 .pay-row-credit i { margin-right: 4px; }
 
+.pay-credit-prompt {
+    background: rgba(91, 141, 239, 0.10);
+    border: 1px solid rgba(91, 141, 239, 0.30);
+    border-radius: var(--pay-radius-sm);
+    padding: 12px 14px;
+    margin-bottom: 14px;
+    text-align: left;
+}
+.pay-credit-prompt-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 700;
+    font-size: 13px;
+    color: var(--pay-white);
+    margin-bottom: 6px;
+}
+.pay-credit-prompt-head i { color: #5b8def; }
+.pay-credit-prompt-text {
+    margin: 0 0 10px;
+    font-size: 13px;
+    color: var(--pay-text);
+    line-height: 1.5;
+}
+.pay-credit-apply-label {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--pay-white);
+    margin: 0;
+}
+.pay-credit-apply-label input {
+    margin-top: 3px;
+    width: 18px;
+    height: 18px;
+    accent-color: var(--pay-primary);
+    flex-shrink: 0;
+}
+.pay-credit-prompt-foot {
+    margin-top: 8px;
+    font-size: 11px;
+    color: var(--pay-muted);
+    line-height: 1.45;
+}
+
 /* ─── Refund box inside modal ─── */
 .pay-refund-box {
     display: flex;

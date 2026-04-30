@@ -186,6 +186,18 @@
             </div>
 
             <div class="pay-totals">
+                <div class="pay-credit-prompt" id="creditPromptBox" hidden>
+                    <div class="pay-credit-prompt-head">
+                        <i class="fas fa-wallet"></i>
+                        <span>Account credit available</span>
+                    </div>
+                    <p class="pay-credit-prompt-text" id="creditPromptText"></p>
+                    <label class="pay-credit-apply-label">
+                        <input type="checkbox" id="chkApplyAccountCredit">
+                        <span>Use my credit toward this payment</span>
+                    </label>
+                    <p class="pay-credit-prompt-foot mb-0" id="creditPromptFoot"></p>
+                </div>
                 <div class="pay-row"><span>Subtotal</span><span id="sumSubtotal">£0.00</span></div>
                 <div class="pay-row"><span>Estimated tax (8%)</span><span id="sumTax">£0.00</span></div>
                 <div class="pay-row pay-row-credit" id="creditRow" hidden>

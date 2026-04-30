@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Terms & Conditions - GymDD</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<link rel="stylesheet" href="CSS/style.css">
+<link rel="icon" type="image" href="images/logo.png">
+<style>
+:root {
+    --primary: #FF6B35;
+    --bg-dark: #0b0b1a;
+    --bg-section: #0f0f22;
+    --card: #1a1a36;
+    --text: #d4d4e0;
+    --text-muted: #8888a0;
+    --border: rgba(255, 255, 255, 0.06);
+    --radius: 14px;
+    --shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+}
+body { background: var(--bg-dark); color: var(--text); line-height: 1.7; }
+header { background: var(--bg-section); padding: 40px 0; text-align: center; border-bottom: 1px solid var(--border); }
+.logo-section img { width: 140px; height: 140px; border-radius: 50%; border: 4px solid var(--primary); margin-bottom: 24px; }
+h1 { font-size: 36px; font-weight: 700; color: var(--text); margin-bottom: 8px; }
+.tagline { color: var(--text-muted); font-size: 16px; }
+.container { max-width: 900px; margin: 0 auto; padding: 60px 24px; display: flexbox; flex-direction: column; gap: 40px; }
+.terms-section { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 40px; margin-bottom: 40px; box-shadow: var(--shadow); }
+.terms-section h2 { font-size: 24px; color: var(--text); margin-bottom: 20px; position: relative; }
+.terms-section h2::after { content: ''; position: absolute; bottom: -10px; left: 0; width: 50px; height: 3px; background: var(--primary); border-radius: 2px; }
+.terms-section h3 { font-size: 18px; color: var(--primary); margin: 28px 0 12px; }
+.terms-section p, .terms-section li { font-size: 15px; color: var(--text-muted); margin-bottom: 12px; }
+.download-link { display: inline-flex; align-items: center; gap: 8px; background: var(--primary); color: white; padding: 12px 24px; border-radius: 50px; font-weight: 600; text-decoration: none; margin: 20px 0; transition: 0.3s; }
+.download-link:hover { background: #e45a28; color: white; transform: translateY(-2px); }
+footer { background: var(--bg-section); padding: 32px 0; text-align: center; border-top: 1px solid var(--border); }
+footer img { width: 64px; height: 64px; border-radius: 50%; border: 3px solid var(--primary); }
+@media (max-width: 768px) { .terms-section { padding: 28px; } h1 { font-size: 28px; } }
+</style>
+</head>
+<body>
+<header>
+    <div class="container">
+        <div class="logo-section">
+            <img src="images/logo.png" alt="GymDD Logo">
+            <h1>GymDD Terms & Conditions</h1>
+            <p class="tagline">Last Updated: December 2024</p>
+        </div>
+    </div>
+</header>
+
+<main class="container">
+    <section id="general" class="terms-section">
+        <h2>1. General Terms</h2>
+        <p>Welcome to GymDD. By accessing our services or registering, you agree to these Terms & Conditions.</p>
+        <h3>1.1 Acceptance of Terms</h3>
+        <p>These terms govern your use of GymDD website, app, facilities, and services. Continued use constitutes acceptance.</p>
+        <h3>1.2 Membership & Payments</h3>
+        <ul>
+            <li>Memberships are non-refundable except as required by law.</li>
+            <li>Payments via secure gateways; auto-renewal unless cancelled.</li>
+            <li>Late fees apply after 7 days.</li>
+        </ul>
+        <h3>1.3 Facility Use</h3>
+        <p>Follow safety rules, clean equipment, no food in training areas. Management reserves right to revoke access.</p>
+    </section>
+
+    <section id="trainer" class="terms-section">
+        <h2>2. Trainer / Tutor Specific Terms</h2>
+        <p>These additional terms apply to trainers/tutors applying or approved on our platform.</p>
+        <h3>2.1 Eligibility & Certifications</h3>
+        <p>Trainers must hold valid certifications (NASM, ACE, etc.), current CPR/AED, 2+ years experience. Provide proof upon request. False info leads to immediate termination.</p>
+        <h3>2.2 Responsibilities</h3>
+        <ul>
+            <li>Deliver sessions as scheduled with professional conduct.</li>
+            <li>Maintain client confidentiality (health data, progress).</li>
+            <li>Use equipment safely; report issues immediately.</li>
+            <li>Follow GymDD protocols for emergencies/injuries.</li>
+        </ul>
+        <h3>2.3 Liability & Insurance</h3>
+        <p>Trainers maintain personal liability insurance ($1M min). GymDD not liable for trainer actions. Trainers indemnify GymDD against client claims from negligence.</p>
+        <h3>2.4 Payments & Commissions</h3>
+        <p>Payments weekly via direct deposit, 70/30 split (trainer/GymDD). No-shows deducted.</p>
+        <h3>2.5 Termination</h3>
+        <p>30 days notice. Immediate for misconduct, complaints, certification lapse.</p>
+        <h3>2.6 Conduct</h3>
+        <ul>
+            <li>Professional attire, punctuality, positive attitude.</li>
+            <li>No solicitation of clients outside platform.</li>
+            <li>Respect privacy; no photos/videos without consent.</li>
+        </ul>
+    </section>
+
+    <section class="terms-section">
+        <h2>3. Download Full Terms</h2>
+        <p>Official Terms & Conditions document for reference/print:</p>
+        <a href="../docs/terms.docx" class="download-link" download><i class="fas fa-download"></i> Download Terms.docx</a>
+        <p class="text-muted small mt-3">Word document with complete legal terms, signatures, effective dates.</p>
+    </section>
+</main>
+
+<footer>
+    <div class="container">
+        <img src="images/logo.png" alt="GymDD">
+        <p>&copy; 2024 GymDD Fitness. All rights reserved. <a href="terms.html" style="color: var(--primary);">Terms</a> | <a href="privacy.html" style="color: var(--primary);">Privacy</a></p>
+    </div>
+</footer>
+</body>
+</html>

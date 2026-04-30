@@ -1,8 +1,9 @@
 /* ═══════════════════════════════════════
-   GymDD — Admin dashboard (full sections)
+   GymDD — Admin dashboard (card-grid + modals)
    ═══════════════════════════════════════ */
 
 import { firebaseConfig } from './firebase-config.js';
+import { isMemberPlanActive } from './membership-utils.js';
 
 firebase.initializeApp(firebaseConfig);
 
@@ -18,6 +19,27 @@ var approvedTrainerNames = {};
 
 var DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
+/* ─── Caches for grids (used for search/filter and modal lookup) ─── */
+var allMembersCache = [];
+var allMembersById = {};
+var allTrainersCache = [];
+var allTrainersById = {};
+var allClassesCache = [];
+var allClassesById = {};
+
+var adminClassLogWeekOffset = 0;
+
+
+var memberDetailModalInstance = null;
+var trainerDetailModalInstance = null;
+var classDetailModalInstance = null;
+var currentMemberDetailId = null;
+var currentTrainerDetailId = null;
+var currentClassDetailId = null;
+
+var adminHtml5QrCode = null;
+
+/* ─── Helpers ─── */
 function escHtml(s) {
     if (s == null || s === '') return '';
     var d = document.createElement('div');
@@ -32,15 +54,94 @@ function tsSeconds(ts) {
     return 0;
 }
 
+function tsToDate(ts) {
+    if (!ts) return null;
+    if (typeof ts.toDate === 'function') {
+        try { return ts.toDate(); } catch (e) { /* ignore */ }
+    }
+    if (typeof ts.seconds === 'number') return new Date(ts.seconds * 1000);
+    if (typeof ts === 'number') return new Date(ts);
+    if (typeof ts === 'string') {
+        var d = new Date(ts);
+        if (!isNaN(d.getTime())) return d;
+    }
+    return null;
+}
+
+function formatDate(ts) {
+    var d = tsToDate(ts);
+    if (!d) return '—';
+    return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+function formatDateTime(ts) {
+    var d = tsToDate(ts);
+    if (!d) return '\u2014';
+    return d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+function adminCurrencySym(code) {
+    if (code === 'USD') return '$';
+    if (code === 'EUR') return '\u20AC';
+    return '\u00A3';
+}
+
+function adminFmtMoney(code, n) {
+    var sym = adminCurrencySym(code || 'GBP');
+    var v = typeof n === 'number' && !isNaN(n) ? n : 0;
+    return sym + v.toFixed(2);
+}
+
+function getInitials(name, fallback) {
+    var src = (name && String(name).trim()) || fallback || '';
+    if (!src) return '?';
+    return src.split(/\s+/).map(function(w) { return w[0]; }).join('').substring(0, 2).toUpperCase();
+}
+
+function avatarHtml(name, email, photoURL, sizeClass) {
+    var initials = getInitials(name, email);
+    var cls = 'user-avatar' + (sizeClass ? ' ' + sizeClass : '');
+    if (photoURL && /^https?:\/\//i.test(photoURL)) {
+        return '<div class="' + cls + '">' +
+            '<img src="' + escHtml(photoURL) + '" alt="' + escHtml(name || 'avatar') + '" ' +
+            'onerror="this.parentNode.textContent=\'' + initials + '\'"></div>';
+    }
+    return '<div class="' + cls + '">' + initials + '</div>';
+}
+
+function bigAvatarInto(boxId, initialsId, name, email, photoURL) {
+    var box = $(boxId);
+    var ini = $(initialsId);
+    if (!box || !ini) return;
+    var initials = getInitials(name, email);
+    ini.textContent = initials;
+    var existing = box.querySelector('img');
+    if (existing) existing.remove();
+    if (photoURL && /^https?:\/\//i.test(photoURL)) {
+        var img = document.createElement('img');
+        img.alt = name || 'avatar';
+        img.src = photoURL;
+        ini.style.display = 'none';
+        img.onerror = function() {
+            img.remove();
+            ini.style.display = '';
+        };
+        box.appendChild(img);
+    } else {
+        ini.style.display = '';
+    }
+}
+
+/* ─── Auth + boot ─── */
 function showDashboard(user) {
     $('loadingGate').style.display = 'none';
     $('mainContent').style.display = 'block';
     if ($('adminEmail')) $('adminEmail').textContent = user.email || '';
     loadOverviewStats();
-    loadPendingMembers();
     loadAllMembers();
     loadTrainerApplications();
-    populateTrainerSelect(); /* warm cache for class modal */
+    loadClassesAdmin();
+    populateTrainerSelect();
 }
 
 function ensureAdmin(user) {
@@ -81,13 +182,23 @@ if ($('btnLogout')) {
 var sidebarLinks = document.querySelectorAll('.sidebar-nav a[data-section]');
 var sections = document.querySelectorAll('.admin-section');
 var titles = {
+
     overview: '<i class="fas fa-chart-pie me-2 text-info"></i>Dashboard',
-    pending: '<i class="fas fa-clock me-2 text-warning"></i>Pending Requests',
+
     members: '<i class="fas fa-users me-2"></i>All Members',
+
     trainers: '<i class="fas fa-chalkboard-teacher me-2"></i>Trainer Applications',
+
     trainerAvail: '<i class="fas fa-calendar-check me-2"></i>Trainer Schedules',
+
+    classTracking: '<i class="fas fa-clipboard-check me-2"></i>Weekly class log',
+
     classes: '<i class="fas fa-dumbbell me-2"></i>Classes',
+
+    checkin: '<i class="fas fa-qrcode me-2"></i>Booking check-in',
+
     chat: '<i class="fas fa-comments me-2"></i>Chat'
+
 };
 
 sidebarLinks.forEach(function(link) {
@@ -101,6 +212,7 @@ sidebarLinks.forEach(function(link) {
 });
 
 function switchSection(name) {
+    if (name !== 'checkin') stopAdminQrScanner();
     sidebarLinks.forEach(function(a) { a.classList.remove('active'); });
     sections.forEach(function(s) { s.classList.remove('active'); });
     var lnk = document.querySelector('.sidebar-nav a[data-section="' + name + '"]');
@@ -110,6 +222,11 @@ function switchSection(name) {
     if ($('topbarTitle')) $('topbarTitle').innerHTML = titles[name] || name;
 
     if (name === 'trainerAvail') loadTrainerAvailability();
+    if (name === 'classTracking') {
+        populateAdminClassLogTrainerFilter();
+        loadAdminTrainerClassTracking();
+    }
+
     if (name === 'classes') loadClassesAdmin();
     if (name === 'chat') loadAdminChatTrainers();
 }
@@ -129,12 +246,10 @@ function closeSidebar() {
 if ($('sidebarClose')) $('sidebarClose').addEventListener('click', closeSidebar);
 if (overlay) overlay.addEventListener('click', closeSidebar);
 
-/* ─── Firestore: members list with optional orderBy fallback ─── */
+/* ─── Firestore: ordered fetch w/ fallback ─── */
 function fetchMembersOrdered() {
     return db.collection('members').orderBy('createdAt', 'desc').get()
-        .catch(function() {
-            return db.collection('members').get();
-        })
+        .catch(function() { return db.collection('members').get(); })
         .then(function(snap) {
             var rows = [];
             snap.forEach(function(d) { rows.push(d); });
@@ -145,9 +260,7 @@ function fetchMembersOrdered() {
 
 function fetchTrainersOrdered() {
     return db.collection('trainers').orderBy('createdAt', 'desc').get()
-        .catch(function() {
-            return db.collection('trainers').get();
-        })
+        .catch(function() { return db.collection('trainers').get(); })
         .then(function(snap) {
             var rows = [];
             snap.forEach(function(d) { rows.push(d); });
@@ -156,276 +269,986 @@ function fetchTrainersOrdered() {
         });
 }
 
-/* ─── Overview stats + combined pending preview ─── */
+/* ─── Overview stats + recent pending trainer apps ─── */
 function loadOverviewStats() {
     db.collection('members').get().then(function(snap) {
-        var total = 0, approved = 0, pending = 0, rejected = 0;
+        if ($('statTotal')) $('statTotal').textContent = snap.size;
+        var active = 0;
+        snap.forEach(function(doc) {
+            if (isMemberPlanActive(doc.data())) active++;
+        });
+        if ($('statActiveMembers')) $('statActiveMembers').textContent = active;
+    });
+
+    db.collection('trainers').get().then(function(snap) {
+        var total = 0, approved = 0, pending = 0;
         snap.forEach(function(doc) {
             total++;
             var st = doc.data().approvalStatus || 'pending';
             if (st === 'approved') approved++;
             else if (st === 'pending') pending++;
-            else if (st === 'rejected') rejected++;
         });
-        if ($('statTotal')) $('statTotal').textContent = total;
-        if ($('statApproved')) $('statApproved').textContent = approved;
-        if ($('statPending')) $('statPending').textContent = pending;
-        if ($('statRejected')) $('statRejected').textContent = rejected;
+        if ($('statTrainers')) $('statTrainers').textContent = total;
+        if ($('statApprovedTrainers')) $('statApprovedTrainers').textContent = approved;
+        if ($('statPendingTrainers')) $('statPendingTrainers').textContent = pending;
     });
-    db.collection('trainers').get().then(function(snap) {
-        if ($('statTrainers')) $('statTrainers').textContent = snap.size;
-    });
+
     db.collection('classes').get().then(function(snap) {
         if ($('statClasses')) $('statClasses').textContent = snap.size;
     }).catch(function() {
         if ($('statClasses')) $('statClasses').textContent = '0';
     });
 
-    var ob = $('overviewPendingBody');
-    if (!ob) return;
-    ob.innerHTML = '<tr><td colspan="5" class="text-center text-muted">Loading…</td></tr>';
+    var grid = $('overviewPendingGrid');
+    if (grid) {
+    grid.innerHTML = '<div class="col-12 text-center text-muted py-4">Loading…</div>';
 
-    var combined = [];
-    db.collection('members').where('approvalStatus', '==', 'pending').limit(12).get()
+    db.collection('trainers').where('approvalStatus', '==', 'pending').get()
         .then(function(snap) {
+            var rows = [];
             snap.forEach(function(doc) {
-                var d = doc.data();
-                combined.push({
-                    type: 'Member',
-                    id: doc.id,
-                    name: d.displayName || '—',
-                    email: d.email || '—',
-                    ts: tsSeconds(d.createdAt),
-                    actions: 'member'
-                });
+                var item = { id: doc.id, data: doc.data() };
+                rows.push(item);
+                allTrainersById[doc.id] = item;
             });
-            return db.collection('trainers').where('approvalStatus', '==', 'pending').limit(12).get();
-        })
-        .then(function(snap) {
-            snap.forEach(function(doc) {
-                var d = doc.data();
-                combined.push({
-                    type: 'Trainer',
-                    id: doc.id,
-                    name: d.displayName || '—',
-                    email: d.email || '—',
-                    ts: tsSeconds(d.createdAt),
-                    actions: 'trainer'
-                });
-            });
-            combined.sort(function(a, b) { return b.ts - a.ts; });
-            combined = combined.slice(0, 10);
+            rows.sort(function(a, b) { return tsSeconds(b.data.createdAt) - tsSeconds(a.data.createdAt); });
+            var top = rows.slice(0, 12);
 
-            ob.innerHTML = '';
-            if (!combined.length) {
-                ob.innerHTML = '<tr><td colspan="5" class="text-center text-muted">No pending requests</td></tr>';
+            if ($('overviewPendingCount')) {
+                $('overviewPendingCount').textContent = '(' + rows.length + ')';
+            }
+
+            grid.innerHTML = '';
+            if (!top.length) {
+                grid.innerHTML = '<div class="col-12 text-center text-muted py-4">No pending trainer applications</div>';
                 return;
             }
-            combined.forEach(function(row) {
-                var tr = document.createElement('tr');
-                var dateStr = row.ts ? new Date(row.ts * 1000).toLocaleDateString() : '—';
-                var btns = '';
-                if (row.actions === 'member') {
-                    btns =
-                        '<button class="btn btn-sm btn-success me-1" onclick="approveMember(\'' + row.id + '\')"><i class="fas fa-check"></i></button>' +
-                        '<button class="btn btn-sm btn-danger" onclick="rejectMember(\'' + row.id + '\')"><i class="fas fa-times"></i></button>';
-                } else {
-                    btns =
-                        '<button class="btn btn-sm btn-success me-1" onclick="approveTrainer(\'' + row.id + '\')"><i class="fas fa-check"></i></button>' +
-                        '<button class="btn btn-sm btn-danger" onclick="rejectTrainer(\'' + row.id + '\')"><i class="fas fa-times"></i></button>';
+
+            top.forEach(function(item) {
+                var d = item.data;
+                var name = d.displayName || '—';
+                var initials = getInitials(name, d.email);
+                var hasPhoto = d.photoURL && /^https?:\/\//i.test(d.photoURL);
+                var avatar = hasPhoto
+                    ? '<div class="trainer-avatar"><img src="' + escHtml(d.photoURL) + '" alt="' + escHtml(name) + '" onerror="this.parentNode.textContent=\'' + initials + '\'"></div>'
+                    : '<div class="trainer-avatar">' + initials + '</div>';
+
+                var col = document.createElement('div');
+                col.className = 'col-6 col-sm-4 col-md-3 col-lg-2';
+                col.innerHTML =
+                    '<div class="dash-card h-100 member-card" tabindex="0" data-id="' + item.id + '">' +
+                        '<div class="card-body text-center">' +
+                            avatar +
+                            '<h6 class="text-white fw-bold mt-2 mb-1">' + escHtml(name) + '</h6>' +
+                            '<span class="badge bg-info">' + escHtml(d.specialization || '—') + '</span>' +
+                            '<div class="mt-1"><span class="badge bg-warning">Pending</span></div>' +
+                        '</div>' +
+                    '</div>';
+                var card = col.querySelector('.member-card');
+                card.addEventListener('click', function() { openTrainerDetailModal(item.id); });
+                card.addEventListener('keydown', function(e) {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        openTrainerDetailModal(item.id);
+                    }
+                });
+                grid.appendChild(col);
+            });
+        })
+        .catch(function() {
+            grid.innerHTML = '<div class="col-12 text-center text-danger py-4">Could not load pending trainers.</div>';
+        });
+    }
+
+    loadOverviewClassTrainerRequests();
+    loadOverviewMembershipRevenue();
+    loadOverviewRefundRequests();
+    loadOverviewAccountDeletionRequests();
+}
+
+/** Sum charged vs refunds from all members' membershipPurchases (collection group). */
+function loadOverviewMembershipRevenue() {
+    var netEl = $('statNetRevenue');
+    var subEl = $('statRevBreakdown');
+    if (!netEl) return;
+
+    db.collectionGroup('membershipPurchases').get()
+        .then(function(snap) {
+            var gross = 0;
+            var refunds = 0;
+            var cur = 'GBP';
+            snap.forEach(function(doc) {
+                var r = doc.data();
+                var t = r.type || '';
+                if (t === 'purchase' || t === 'plan_change') {
+                    if (typeof r.amountCharged === 'number' && !isNaN(r.amountCharged)) {
+                        gross += r.amountCharged;
+                    }
+                    if (r.refundChoice === 'refund' && typeof r.refundOrCreditAmount === 'number') {
+                        refunds += r.refundOrCreditAmount;
+                    }
+                    if (r.currency && typeof r.currency === 'string' && r.amountCharged > 0) {
+                        cur = r.currency;
+                    }
                 }
+                if (t === 'admin_refund_approved' && typeof r.refundOrCreditAmount === 'number') {
+                    refunds += r.refundOrCreditAmount;
+                    if (r.currency) cur = r.currency;
+                }
+            });
+            var net = Math.max(0, +(gross - refunds).toFixed(2));
+            netEl.textContent = adminFmtMoney(cur, net);
+            if (subEl) {
+                subEl.textContent =
+                    'Gross ' + adminFmtMoney(cur, gross) +
+                    ' \u00B7 Refunds ' + adminFmtMoney(cur, refunds);
+            }
+        })
+        .catch(function(err) {
+            console.error(err);
+            netEl.textContent = '\u2014';
+            if (subEl) subEl.textContent = 'Could not load ledger';
+        });
+}
+
+function loadOverviewRefundRequests() {
+    var tbody = $('overviewRefundsBody');
+    if (!tbody) return;
+    tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted">Loading\u2026</td></tr>';
+
+    db.collection('refundRequests').get()
+        .then(function(snap) {
+            var rows = [];
+            snap.forEach(function(doc) {
+                rows.push({ id: doc.id, d: doc.data() });
+            });
+            rows.sort(function(a, b) {
+                return tsSeconds(b.d.createdAt) - tsSeconds(a.d.createdAt);
+            });
+
+            if ($('overviewRefundsCount')) {
+                var pend = rows.filter(function(x) { return (x.d.status || '') === 'pending'; }).length;
+                $('overviewRefundsCount').textContent = '(' + pend + ' pending)';
+            }
+
+            tbody.innerHTML = '';
+            if (!rows.length) {
+                tbody.innerHTML =
+                    '<tr><td colspan="9" class="text-center text-muted">No refund requests yet.</td></tr>';
+                return;
+            }
+
+            rows.forEach(function(row) {
+                var d = row.d;
+                var tr = document.createElement('tr');
+                var sym = adminCurrencySym(d.currency || 'GBP');
+                var when = formatDate(d.createdAt);
+                var st = (d.status || 'pending').toLowerCase();
+                var statusBadge =
+                    st === 'approved'
+                        ? '<span class="badge bg-success">Approved</span>'
+                        : st === 'rejected'
+                            ? '<span class="badge bg-secondary">Rejected</span>'
+                            : '<span class="badge bg-warning text-dark">Pending</span>';
+                var amt =
+                    typeof d.amount === 'number' && !isNaN(d.amount)
+                        ? sym + d.amount.toFixed(2)
+                        : '\u2014';
+
+                var src = (d.requestOrigin || '') === 'refund' ? 'Refund owing' : 'Account credit';
+                var srcBadge =
+                    (d.requestOrigin || '') === 'refund'
+                        ? '<span class="badge bg-warning text-dark">' + escHtml(src) + '</span>'
+                        : '<span class="badge bg-info">' + escHtml(src) + '</span>';
+                var notesShort = (d.notes && String(d.notes).trim()) || '\u2014';
+                var adminNote = (d.adminNote && String(d.adminNote).trim()) || '';
+                var detail =
+                    escHtml(notesShort.length > 120 ? notesShort.slice(0, 117) + '\u2026' : notesShort);
+                if (adminNote) {
+                    detail +=
+                        '<div class="small text-muted mt-1"><strong>Admin:</strong> ' +
+                        escHtml(adminNote.length > 160 ? adminNote.slice(0, 157) + '\u2026' : adminNote) +
+                        '</div>';
+                }
+
+                var tdAct = document.createElement('td');
+                if (st === 'pending') {
+                    var ok = document.createElement('button');
+                    ok.type = 'button';
+                    ok.className = 'btn btn-sm btn-success me-1';
+                    ok.title =
+                        (d.requestOrigin || '') === 'refund'
+                            ? 'Approve payout (reduces refund owing)'
+                            : 'Approve payout (reduces account credit)';
+                    ok.innerHTML = '<i class="fas fa-check"></i>';
+                    ok.addEventListener('click', function() {
+                        approveRefundRequest(row.id, d);
+                    });
+                    var no = document.createElement('button');
+                    no.type = 'button';
+                    no.className = 'btn btn-sm btn-outline-danger';
+                    no.title = 'Reject';
+                    no.innerHTML = '<i class="fas fa-times"></i>';
+                    no.addEventListener('click', function() {
+                        rejectRefundRequest(row.id);
+                    });
+                    tdAct.appendChild(ok);
+                    tdAct.appendChild(no);
+                } else {
+                    tdAct.innerHTML = '\u2014';
+                }
+
                 tr.innerHTML =
-                    '<td>' + escHtml(row.name) + '</td>' +
-                    '<td>' + escHtml(row.email) + '</td>' +
-                    '<td><span class="badge bg-info">' + escHtml(row.type) + '</span></td>' +
-                    '<td>' + dateStr + '</td>' +
-                    '<td>' + btns + '</td>';
-                ob.appendChild(tr);
+                    '<td class="small">' + escHtml(when) + '</td>' +
+                    '<td class="small font-monospace">' + escHtml(d.memberId || '\u2014') + '</td>' +
+                    '<td>' + escHtml(d.memberName || '\u2014') + '</td>' +
+                    '<td class="small">' + escHtml(d.memberEmail || '\u2014') + '</td>' +
+                    '<td class="fw-semibold">' + escHtml(amt) + '</td>' +
+                    '<td>' + srcBadge + '</td>' +
+                    '<td class="small">' + detail + '</td>' +
+                    '<td>' + statusBadge + '</td>';
+                tr.appendChild(tdAct);
+                tbody.appendChild(tr);
+            });
+        })
+        .catch(function(err) {
+            console.error(err);
+            tbody.innerHTML =
+                '<tr><td colspan="9" class="text-center text-danger">Could not load refund requests.</td></tr>';
+        });
+}
+
+function approveRefundRequest(requestId, reqData) {
+    if (!requestId || !reqData || !reqData.memberId) return;
+    var amt = typeof reqData.amount === 'number' ? reqData.amount : 0;
+    if (amt <= 0) return;
+    var origin = reqData.requestOrigin === 'refund' ? 'refund' : 'credit';
+
+    var confirmMsg =
+        'Approve this payout for ' +
+        adminFmtMoney(reqData.currency, amt) +
+        '?\n\n' +
+        (origin === 'refund'
+            ? 'SOURCE: refund owing (plan change).\nMembership credit will stay the same unless you change it elsewhere;\nthe REFUND owing amount decreases by this payout.'
+            : 'SOURCE: account credit.\nAccount credit decreases by up to this amount.');
+
+    if (!confirm(confirmMsg)) return;
+
+    var adminNotePrompt = window.prompt('Optional admin note (stored on the request):', '');
+    if (adminNotePrompt === null) return;
+
+    var reqRef = db.collection('refundRequests').doc(requestId);
+
+    db.runTransaction(function(tx) {
+        return tx.get(reqRef).then(function(rs) {
+            if (!rs.exists) throw new Error('Request not found');
+            var rd = rs.data();
+            if ((rd.status || 'pending') !== 'pending') throw new Error('This request was already handled');
+            var memberIdLedger = rd.memberId;
+            if (!memberIdLedger || memberIdLedger !== reqData.memberId) {
+                throw new Error('Member mismatch');
+            }
+            var amtReq =
+                typeof rd.amount === 'number'
+                    ? rd.amount
+                    : typeof reqData.amount === 'number'
+                        ? reqData.amount
+                        : amt;
+            if (amtReq <= 0) throw new Error('Invalid amount on request');
+
+            var originTx = rd.requestOrigin === 'refund' ? 'refund' : 'credit';
+
+            var memRef = db.collection('members').doc(memberIdLedger);
+            var ledgerRef = memRef.collection('membershipPurchases').doc();
+            return tx.get(memRef).then(function(ms) {
+                var md = ms.exists ? ms.data() : {};
+                var credit = typeof md.planCredit === 'number' ? md.planCredit : 0;
+                var lrOutstanding =
+                    typeof md.lastRefundAmount === 'number' ? md.lastRefundAmount : 0;
+                var cur = rd.currency || reqData.currency || md.planCurrency || 'GBP';
+
+                var deduct = 0;
+                var newCredit = credit;
+                var newLastRefundAmt = lrOutstanding;
+                var memUpdate = {};
+
+                if (originTx === 'credit') {
+                    if (amtReq > credit + 0.000001) {
+                        throw new Error('Amount is higher than the member\'s credit. Reject this request.');
+                    }
+                    deduct = amtReq;
+                    newCredit = Math.max(0, +(credit - deduct).toFixed(2));
+                    memUpdate.planCredit = newCredit;
+                } else {
+                    if (amtReq > lrOutstanding + 0.000001) {
+                        throw new Error('Amount exceeds refund owing. Reject this request.');
+                    }
+                    deduct = 0;
+                    newLastRefundAmt = Math.max(0, +(lrOutstanding - amtReq).toFixed(2));
+                    memUpdate.lastRefundAmount = newLastRefundAmt;
+                    memUpdate.lastRefundAt = firebase.firestore.FieldValue.serverTimestamp();
+                }
+
+                var noteParts = [
+                    originTx === 'credit'
+                        ? 'Admin-approved payout from account credit.'
+                        : 'Admin-approved payout from refund owing.',
+                    'Member note: ' + (rd.notes || '')
+                ];
+                if (adminNotePrompt && String(adminNotePrompt).trim()) {
+                    noteParts.push('Admin: ' + String(adminNotePrompt).trim());
+                }
+                if (originTx === 'credit' && deduct < amtReq) {
+                    noteParts.push(
+                        'Credit deducted ' +
+                            adminFmtMoney(cur, deduct) +
+                            ' of ' +
+                            adminFmtMoney(cur, amtReq)
+                    );
+                }
+
+                tx.update(memRef, memUpdate);
+
+                tx.set(ledgerRef, {
+                    memberId: memberIdLedger,
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                    type: 'admin_refund_approved',
+                    planId: md.planId || '',
+                    planName: md.plan || '',
+                    period: md.planPeriod || '',
+                    currency: cur,
+                    amountCharged: 0,
+                    refundOrCreditAmount: amtReq,
+                    adminRefundedAmount: amtReq,
+                    refundChoice: 'refund',
+                    requestOriginSnapshot: originTx,
+                    planCreditAfter: newCredit,
+                    creditDeducted: originTx === 'credit' ? deduct : 0,
+                    refundRequestId: requestId,
+                    note: noteParts.join(' ')
+                });
+
+                tx.update(reqRef, {
+                    status: 'approved',
+                    reviewedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                    reviewedByUid: currentUid,
+                    adminNote:
+                        adminNotePrompt && String(adminNotePrompt).trim()
+                            ? String(adminNotePrompt).trim()
+                            : '',
+                    creditDeducted: originTx === 'credit' ? deduct : 0,
+                    resolvedAmount: amtReq
+                });
             });
         });
+    }).then(function() {
+        loadOverviewStats();
+    }).catch(function(err) {
+        alert(err.message || 'Could not approve refund.');
+    });
+}
+
+function rejectRefundRequest(requestId) {
+    if (!requestId) return;
+    if (!confirm('Reject this refund request?')) return;
+    var adminNote = window.prompt('Optional reason (shown to staff on this row):', '');
+    if (adminNote === null) return;
+
+    db.collection('refundRequests').doc(requestId).update({
+        status: 'rejected',
+        reviewedAt: firebase.firestore.FieldValue.serverTimestamp(),
+        reviewedByUid: currentUid,
+        adminNote: adminNote && String(adminNote).trim() ? String(adminNote).trim() : ''
+    }).then(function() {
+        loadOverviewStats();
+    }).catch(function(err) {
+        alert(err.message || 'Could not reject request.');
+    });
+}
+
+function adminMarkAuthAccountRemoved(requestId) {
+    if (!requestId || !confirm('Confirm you removed this user from Firebase Authentication in the Firebase Console?')) return;
+    db.collection('accountDeletionRequests')
+        .doc(requestId)
+        .update({
+            status: 'completed_admin',
+            authRemovedAt: firebase.firestore.FieldValue.serverTimestamp(),
+            resolvedByUid: currentUid || ''
+        })
+        .then(function() {
+            loadOverviewStats();
+        })
+        .catch(function(err) {
+            alert(err.message || 'Could not update deletion request.');
+        });
+}
+
+function loadOverviewAccountDeletionRequests() {
+    var tbody = $('overviewAcctDelBody');
+    if (!tbody) return;
+    tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">Loading\u2026</td></tr>';
+
+    db.collection('accountDeletionRequests')
+        .get()
+        .then(function(snap) {
+            var rows = [];
+            snap.forEach(function(doc) {
+                rows.push({ id: doc.id, d: doc.data() });
+            });
+            rows.sort(function(a, b) {
+                return tsSeconds(b.d.createdAt) - tsSeconds(a.d.createdAt);
+            });
+
+            if ($('overviewAcctDelCount')) {
+                var pend = rows.filter(function(x) { return (x.d.status || '') === 'pending'; }).length;
+                $('overviewAcctDelCount').textContent = '(' + pend + ' pending)';
+            }
+
+            tbody.innerHTML = '';
+            if (!rows.length) {
+                tbody.innerHTML =
+                    '<tr><td colspan="8" class="text-center text-muted">No account deletion requests.</td></tr>';
+                return;
+            }
+
+            rows.forEach(function(row) {
+                var d = row.d;
+                var tr = document.createElement('tr');
+                var when = formatDateTime(d.createdAt);
+                var kind = (d.requestType || '') === 'temporary' ? 'Temporary' : 'Permanent';
+                var kindBadge =
+                    kind === 'Temporary'
+                        ? '<span class="badge bg-secondary">' + escHtml(kind) + '</span>'
+                        : '<span class="badge bg-danger">' + escHtml(kind) + '</span>';
+                var cancelCell =
+                    kind === 'Permanent'
+                        ? formatDateTime(d.cancelDeadlineAt)
+                        : '\u2014';
+                var mileCell =
+                    kind === 'Permanent' ? formatDateTime(d.deletionEligibleAfterAt) : '\u2014';
+                var st = (d.status || 'pending').toLowerCase();
+                var statusBadge =
+                    st === 'pending'
+                        ? '<span class="badge bg-warning text-dark">Pending</span>'
+                        : st === 'cancelled_member'
+                            ? '<span class="badge bg-secondary">Withdrawn</span>'
+                            : st === 'completed_admin'
+                                ? '<span class="badge bg-success">Auth removed</span>'
+                                : '<span class="badge bg-light text-dark">' + escHtml(st) + '</span>';
+
+                var tdAct = document.createElement('td');
+                if (st === 'pending') {
+                    var done = document.createElement('button');
+                    done.type = 'button';
+                    done.className = 'btn btn-sm btn-outline-danger';
+                    done.title =
+                        'After deleting the user from Firebase Authentication, click to mark done';
+                    done.innerHTML = '<i class="fas fa-user-slash"></i> Mark Auth removed';
+                    done.addEventListener('click', function() {
+                        adminMarkAuthAccountRemoved(row.id);
+                    });
+                    tdAct.appendChild(done);
+                } else {
+                    tdAct.innerHTML = '\u2014';
+                }
+
+                tr.innerHTML =
+                    '<td class="small text-white">' + escHtml(when) + '</td>' +
+                    '<td>' + kindBadge + '</td>' +
+                    '<td class="small">' + escHtml(d.memberName || '\u2014') + '</td>' +
+                    '<td class="small">' + escHtml(d.memberEmail || '\u2014') + '</td>' +
+                    '<td class="small text-white">' + escHtml(cancelCell) + '</td>' +
+                    '<td class="small text-white">' + escHtml(mileCell) + '</td>' +
+                    '<td>' + statusBadge + '</td>';
+
+                tr.appendChild(tdAct);
+                tbody.appendChild(tr);
+            });
+        })
+        .catch(function(err) {
+            console.error(err);
+            tbody.innerHTML =
+                '<tr><td colspan="8" class="text-center text-danger">Could not load account deletion requests.</td></tr>';
+        });
+}
+
+function loadOverviewClassTrainerRequests() {
+    var tbody = $('overviewClassRequestsBody');
+    if (!tbody) return;
+    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">Loading…</td></tr>';
+
+    db.collection('trainerClassRequests').where('status', '==', 'pending').get()
+        .then(function(snap) {
+            var rows = [];
+            snap.forEach(function(doc) {
+                rows.push({ id: doc.id, d: doc.data() });
+            });
+            rows.sort(function(a, b) {
+                return tsSeconds(b.d.createdAt || b.d.updatedAt) - tsSeconds(a.d.createdAt || a.d.updatedAt);
+            });
+
+            if ($('overviewClassReqCount')) {
+                $('overviewClassReqCount').textContent = '(' + rows.length + ')';
+            }
+
+            tbody.innerHTML = '';
+            if (!rows.length) {
+                tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">No pending trainer class requests</td></tr>';
+                return;
+            }
+
+            rows.forEach(function(row) {
+                var d = row.d;
+                var tr = document.createElement('tr');
+                var dateStr = formatDate(d.createdAt);
+
+                var approveBtn = document.createElement('button');
+                approveBtn.type = 'button';
+                approveBtn.className = 'btn btn-sm btn-success me-1';
+                approveBtn.title = 'Assign trainer to this class';
+                approveBtn.innerHTML = '<i class="fas fa-check"></i>';
+                approveBtn.addEventListener('click', function() {
+                    approveTrainerClassRequest(row.id, d.classId, d.trainerId);
+                });
+
+                var rejectBtn = document.createElement('button');
+                rejectBtn.type = 'button';
+                rejectBtn.className = 'btn btn-sm btn-outline-danger';
+                rejectBtn.title = 'Reject';
+                rejectBtn.innerHTML = '<i class="fas fa-times"></i>';
+                rejectBtn.addEventListener('click', function() {
+                    rejectTrainerClassRequest(row.id);
+                });
+
+                var tdAct = document.createElement('td');
+                tdAct.appendChild(approveBtn);
+                tdAct.appendChild(rejectBtn);
+
+                var tdClass = document.createElement('td');
+                tdClass.textContent = d.className || d.classId || '—';
+                var tdType = document.createElement('td');
+                tdType.className = 'small';
+                tdType.textContent = d.classType || '—';
+                var tdTn = document.createElement('td');
+                tdTn.textContent = d.trainerName || '—';
+                var tdEm = document.createElement('td');
+                tdEm.className = 'small';
+                tdEm.textContent = d.trainerEmail || '—';
+                var tdDt = document.createElement('td');
+                tdDt.className = 'small';
+                tdDt.textContent = dateStr;
+
+                tr.appendChild(tdClass);
+                tr.appendChild(tdType);
+                tr.appendChild(tdTn);
+                tr.appendChild(tdEm);
+                tr.appendChild(tdDt);
+                tr.appendChild(tdAct);
+
+                tbody.appendChild(tr);
+            });
+        })
+        .catch(function() {
+            tbody.innerHTML = '<tr><td colspan="6" class="text-center text-danger">Could not load class requests.</td></tr>';
+        });
+}
+
+function approveTrainerClassRequest(reqDocId, classId, trainerUid) {
+    if (!classId || !trainerUid) return;
+    if (!confirm('Assign this trainer to this class? Their availability should align with the class schedule.')) return;
+
+    db.collection('trainerClassRequests').doc(reqDocId).get().then(function(reqSnap) {
+        if (!reqSnap.exists) throw new Error('Request no longer exists.');
+        var d = reqSnap.data();
+        var tName = d.trainerName || '';
+
+        var batch = db.batch();
+        batch.update(db.collection('classes').doc(classId), {
+            trainerId: trainerUid,
+            trainerName: tName,
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        batch.update(db.collection('trainerClassRequests').doc(reqDocId), {
+            status: 'approved',
+            resolvedAt: firebase.firestore.FieldValue.serverTimestamp(),
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        return batch.commit();
+    }).then(function() {
+        loadOverviewStats();
+        loadClassesAdmin();
+        populateTrainerSelect();
+        loadTrainerAvailability();
+    }).catch(function(err) {
+        alert(err.message || 'Could not approve request.');
+    });
+}
+
+function rejectTrainerClassRequest(reqDocId) {
+    if (!confirm('Reject this class assignment request?')) return;
+    db.collection('trainerClassRequests').doc(reqDocId).update({
+        status: 'rejected',
+        resolvedAt: firebase.firestore.FieldValue.serverTimestamp(),
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    }).then(function() {
+        loadOverviewStats();
+    }).catch(function(err) {
+        alert(err.message || 'Could not reject request.');
+    });
 }
 
 if ($('btnRefreshOverview')) {
     $('btnRefreshOverview').addEventListener('click', loadOverviewStats);
 }
-
-/* ─── Pending members ─── */
-function loadPendingMembers() {
-    var tbody = $('pendingBody');
-    if (!tbody) return;
-    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">Loading…</td></tr>';
-
-    db.collection('members').where('approvalStatus', '==', 'pending').get()
-        .then(function(snap) {
-            tbody.innerHTML = '';
-            if (snap.empty) {
-                tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">No pending applications</td></tr>';
-                return;
-            }
-            snap.forEach(function(doc) {
-                var d = doc.data();
-                var tr = document.createElement('tr');
-                tr.innerHTML =
-                    '<td>' + escHtml(d.displayName || '—') + '</td>' +
-                    '<td>' + escHtml(d.email || '—') + '</td>' +
-                    '<td>' + escHtml(d.phone || '—') + '</td>' +
-                    '<td><span class="badge bg-info">' + escHtml(d.plan || '—') + '</span></td>' +
-                    '<td><span class="badge bg-warning">Pending</span></td>' +
-                    '<td>' +
-                        '<button class="btn btn-sm btn-success me-1" onclick="approveMember(\'' + doc.id + '\')"><i class="fas fa-check"></i></button>' +
-                        '<button class="btn btn-sm btn-danger" onclick="rejectMember(\'' + doc.id + '\')"><i class="fas fa-times"></i></button>' +
-                    '</td>';
-                tbody.appendChild(tr);
-            });
-        });
+if ($('btnRefreshRefunds')) {
+    $('btnRefreshRefunds').addEventListener('click', function() {
+        loadOverviewMembershipRevenue();
+        loadOverviewRefundRequests();
+    });
+}
+if ($('btnRefreshAcctDelRequests')) {
+    $('btnRefreshAcctDelRequests').addEventListener('click', loadOverviewAccountDeletionRequests);
+}
+if ($('btnRefreshClassRequests')) {
+    $('btnRefreshClassRequests').addEventListener('click', loadOverviewClassTrainerRequests);
 }
 
-window.approveMember = function(uid) {
-    db.collection('members').doc(uid).update({ approvalStatus: 'approved' })
-        .then(function() {
-            loadPendingMembers();
-            loadAllMembers();
-            loadOverviewStats();
-        });
-};
-
-window.rejectMember = function(uid) {
-    db.collection('members').doc(uid).update({ approvalStatus: 'rejected' })
-        .then(function() {
-            loadPendingMembers();
-            loadAllMembers();
-            loadOverviewStats();
-        });
-};
-
-if ($('btnRefreshPending')) {
-    $('btnRefreshPending').addEventListener('click', loadPendingMembers);
-}
-
-/* ─── All members ─── */
+/* ─── All members (card grid + search + detail modal) ─── */
 function loadAllMembers() {
-    var tbody = $('allMembersBody');
-    if (!tbody) return;
-    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">Loading…</td></tr>';
+    var grid = $('allMembersGrid');
+    if (!grid) return;
+    grid.innerHTML = '<div class="col-12 text-center text-muted py-4">Loading members…</div>';
 
     fetchMembersOrdered().then(function(rows) {
-        tbody.innerHTML = '';
-        if (!rows.length) {
-            tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">No members yet</td></tr>';
-            return;
-        }
-        var counts = { total: 0, approved: 0, pending: 0, rejected: 0 };
+        allMembersCache = [];
+        allMembersById = {};
         rows.forEach(function(doc) {
-            var d = doc.data();
-            counts.total++;
-            var st = d.approvalStatus || 'pending';
-            counts[st] = (counts[st] || 0) + 1;
-
-            var statusColors = { approved: 'success', pending: 'warning', rejected: 'danger' };
-            var tr = document.createElement('tr');
-            tr.innerHTML =
-                '<td>' + escHtml(d.displayName || '—') + '</td>' +
-                '<td>' + escHtml(d.email || '—') + '</td>' +
-                '<td>' + escHtml(d.phone || '—') + '</td>' +
-                '<td><span class="badge bg-info">' + escHtml(d.plan || '—') + '</span></td>' +
-                '<td><span class="badge bg-' + (statusColors[st] || 'secondary') + '">' + escHtml(st) + '</span></td>' +
-                '<td>' +
-                    '<button class="btn btn-sm btn-outline-danger" onclick="deleteMember(\'' + doc.id + '\')" title="Delete"><i class="fas fa-trash"></i></button>' +
-                '</td>';
-            tbody.appendChild(tr);
+            var item = { id: doc.id, data: doc.data() };
+            allMembersCache.push(item);
+            allMembersById[doc.id] = item;
         });
-
-        if ($('statTotal')) $('statTotal').textContent = counts.total;
-        if ($('statApproved')) $('statApproved').textContent = counts.approved || 0;
-        if ($('statPending')) $('statPending').textContent = counts.pending || 0;
-        if ($('statRejected')) $('statRejected').textContent = counts.rejected || 0;
+        renderMembersGrid();
     }).catch(function() {
-        tbody.innerHTML = '<tr><td colspan="6" class="text-center text-danger">Could not load members.</td></tr>';
+        grid.innerHTML = '<div class="col-12 text-center text-danger py-4">Could not load members.</div>';
     });
 }
 
-window.deleteMember = function(uid) {
-    if (!confirm('Delete this member permanently?')) return;
-    db.collection('members').doc(uid).delete()
-        .then(function() {
-            loadPendingMembers();
-            loadAllMembers();
-            loadOverviewStats();
-        });
-};
+function renderMembersGrid() {
+    var grid = $('allMembersGrid');
+    if (!grid) return;
+    var q = ($('memberSearch') && $('memberSearch').value || '').trim().toLowerCase();
 
+    var filtered = allMembersCache.filter(function(item) {
+        if (!q) return true;
+        var name = (item.data.displayName || '').toLowerCase();
+        return name.indexOf(q) !== -1;
+    });
+
+    if ($('memberCount')) $('memberCount').textContent = '(' + filtered.length + ')';
+
+    grid.innerHTML = '';
+    if (!filtered.length) {
+        grid.innerHTML = '<div class="col-12 text-center text-muted py-4">' +
+            (q ? 'No members match "' + escHtml(q) + '".' : 'No members yet.') + '</div>';
+        return;
+    }
+
+    filtered.forEach(function(item) {
+        var d = item.data;
+        var name = d.displayName || '—';
+        var initials = getInitials(name, d.email);
+        var hasPhoto = d.photoURL && /^https?:\/\//i.test(d.photoURL);
+        var avatar = hasPhoto
+            ? '<div class="trainer-avatar"><img src="' + escHtml(d.photoURL) + '" alt="' + escHtml(name) + '" onerror="this.parentNode.textContent=\'' + initials + '\'"></div>'
+            : '<div class="trainer-avatar">' + initials + '</div>';
+
+        var col = document.createElement('div');
+        col.className = 'col-6 col-sm-4 col-md-3 col-lg-2';
+        var planLabel = escHtml(d.plan || '—');
+        var currSym = adminCurrencySym(d.planCurrency || 'GBP');
+        var cBal = typeof d.planCredit === 'number' ? d.planCredit : 0;
+        var rOwes = typeof d.lastRefundAmount === 'number' ? d.lastRefundAmount : 0;
+        col.innerHTML =
+            '<div class="dash-card h-100 member-card" tabindex="0" data-id="' + item.id + '">' +
+                '<div class="card-body text-center">' +
+                    avatar +
+                    '<h6 class="text-white fw-bold mt-2 mb-1">' + escHtml(name) + '</h6>' +
+                    '<span class="badge bg-info">' + planLabel + '</span>' +
+                    '<div class="member-card-money small mt-2 text-muted">' +
+                    escHtml('Credit ' + currSym + Math.max(0, cBal).toFixed(2)) +
+                    '<br>' +
+                    escHtml('Refund owing ' + currSym + Math.max(0, rOwes).toFixed(2)) +
+                    '</div>' +
+                '</div>' +
+            '</div>';
+        var card = col.querySelector('.member-card');
+        card.addEventListener('click', function() { openMemberDetailModal(item.id); });
+        card.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                openMemberDetailModal(item.id);
+            }
+        });
+        grid.appendChild(col);
+    });
+}
+
+if ($('memberSearch')) {
+    $('memberSearch').addEventListener('input', renderMembersGrid);
+}
 if ($('btnRefreshAll')) {
     $('btnRefreshAll').addEventListener('click', loadAllMembers);
 }
 
-/* ─── Trainer applications (8 columns: matches admin.html) ─── */
-function loadTrainerApplications() {
-    var tbody = $('trainerAppsBody');
-    if (!tbody) return;
-    tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">Loading…</td></tr>';
+function getMemberDetailModal() {
+    var el = $('memberDetailModal');
+    if (!el || !window.bootstrap) return null;
+    if (typeof bootstrap.Modal.getOrCreateInstance === 'function') {
+        memberDetailModalInstance = bootstrap.Modal.getOrCreateInstance(el);
+    } else if (!memberDetailModalInstance) {
+        memberDetailModalInstance = new bootstrap.Modal(el);
+    }
+    return memberDetailModalInstance;
+}
 
-    fetchTrainersOrdered().then(function(rows) {
-        tbody.innerHTML = '';
-        if (!rows.length) {
-            tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">No trainer applications yet</td></tr>';
-            return;
-        }
-        rows.forEach(function(doc) {
-            var d = doc.data();
-            var statusColors = { approved: 'success', pending: 'warning', rejected: 'danger' };
-            var statusLabel = d.approvalStatus ? d.approvalStatus.charAt(0).toUpperCase() + d.approvalStatus.slice(1) : '—';
+function openMemberDetailModal(memberId) {
+    var item = allMembersById[memberId];
+    if (!item) return;
+    currentMemberDetailId = memberId;
+    var d = item.data;
+    var name = d.displayName || '—';
+    var email = d.email || '—';
 
-            var actions = '';
-            if (d.approvalStatus === 'pending') {
-                actions =
-                    '<button class="btn btn-sm btn-success me-1" onclick="approveTrainer(\'' + doc.id + '\')"><i class="fas fa-check"></i></button>' +
-                    '<button class="btn btn-sm btn-danger me-1" onclick="rejectTrainer(\'' + doc.id + '\')"><i class="fas fa-times"></i></button>';
-            } else if (d.approvalStatus === 'rejected') {
-                actions =
-                    '<button class="btn btn-sm btn-success me-1" onclick="approveTrainer(\'' + doc.id + '\')" title="Approve"><i class="fas fa-check"></i></button>';
+    bigAvatarInto('mdAvatar', 'mdInitials', name, email, d.photoURL);
+    if ($('mdName')) $('mdName').textContent = name;
+    if ($('mdSubtitle')) {
+        $('mdSubtitle').textContent =
+            (d.plan ? d.plan : 'No plan') +
+            (d.planPeriod ? ' · ' + (d.planPeriod === 'yearly' ? 'Yearly' : 'Monthly') : '');
+    }
+    if ($('mdEmail')) $('mdEmail').textContent = email;
+    if ($('mdPhone')) $('mdPhone').textContent = d.phone || '—';
+    if ($('mdJoin')) $('mdJoin').textContent = formatDate(d.createdAt);
+    if ($('mdPlanType')) {
+        $('mdPlanType').innerHTML =
+            (d.plan ? '<span class="badge bg-info">' + escHtml(d.plan) + '</span>' : '—') +
+            (d.planPeriod ? ' <span class="badge bg-secondary ms-1">' + (d.planPeriod === 'yearly' ? 'Yearly' : 'Monthly') + '</span>' : '');
+    }
+    if ($('mdPlanStart')) $('mdPlanStart').textContent = formatDate(d.planActivatedAt);
+    if ($('mdPlanEnd')) $('mdPlanEnd').textContent = formatDate(d.planExpiresAt);
+
+    var bar = $('mdProgressBar');
+    var rem = $('mdRemaining');
+    if ($('mdMemberCredit')) {
+        var symMd = adminCurrencySym(d.planCurrency || 'GBP');
+        $('mdMemberCredit').textContent =
+            typeof d.planCredit === 'number'
+                ? symMd + Math.max(0, d.planCredit).toFixed(2)
+                : symMd + '0.00';
+    }
+    if ($('mdMemberRefundOwes')) {
+        var symR = adminCurrencySym(d.planCurrency || 'GBP');
+        var owes = typeof d.lastRefundAmount === 'number' ? Math.max(0, d.lastRefundAmount) : 0;
+        $('mdMemberRefundOwes').textContent =
+            owes > 0 ? symR + owes.toFixed(2) + ' (plan-change refund owing)' : '—';
+    }
+    if (bar && rem) {
+        bar.classList.remove('warn', 'expired');
+        bar.style.width = '0%';
+        var start = tsToDate(d.planActivatedAt);
+        var end = tsToDate(d.planExpiresAt);
+        if (!end) {
+            rem.textContent = d.planStatus === 'active' ? 'Active' : 'No active membership';
+        } else {
+            var now = new Date();
+            var totalMs = (start && end) ? (end.getTime() - start.getTime()) : 0;
+            var remainingMs = end.getTime() - now.getTime();
+            if (remainingMs <= 0) {
+                bar.classList.add('expired');
+                bar.style.width = '100%';
+                rem.textContent = 'Expired ' + Math.ceil(-remainingMs / (1000 * 60 * 60 * 24)) + ' day(s) ago';
+            } else {
+                var daysLeft = Math.ceil(remainingMs / (1000 * 60 * 60 * 24));
+                var pct = totalMs > 0 ? Math.min(100, Math.max(0, ((totalMs - remainingMs) / totalMs) * 100)) : 0;
+                if (daysLeft <= 7) bar.classList.add('warn');
+                bar.style.width = pct.toFixed(1) + '%';
+                rem.textContent = daysLeft + ' day' + (daysLeft === 1 ? '' : 's') + ' remaining';
             }
-            actions += '<button class="btn btn-sm btn-outline-danger" onclick="deleteTrainer(\'' + doc.id + '\')" title="Delete"><i class="fas fa-trash"></i></button>';
+        }
+    }
 
-            var qualShort = (d.qualifications || '—');
-            if (qualShort.length > 36) qualShort = qualShort.substring(0, 36) + '…';
+    var m = getMemberDetailModal();
+    if (m) m.show();
+}
 
-            var tr = document.createElement('tr');
-            tr.innerHTML =
-                '<td>' + escHtml(d.displayName || '—') + '</td>' +
-                '<td>' + escHtml(d.email || '—') + '</td>' +
-                '<td>' + escHtml(d.phone || '—') + '</td>' +
-                '<td><span class="badge bg-info">' + escHtml(d.specialization || '—') + '</span></td>' +
-                '<td>' + escHtml(d.experience != null ? d.experience : '—') + ' yr</td>' +
-                '<td class="small">' + escHtml(qualShort) + '</td>' +
-                '<td><span class="badge bg-' + (statusColors[d.approvalStatus] || 'secondary') + '">' + escHtml(statusLabel) + '</span></td>' +
-                '<td>' + actions + '</td>';
-            tbody.appendChild(tr);
-        });
-    }).catch(function() {
-        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-danger">Could not load trainers.</td></tr>';
+if ($('btnDeleteMemberFromModal')) {
+    $('btnDeleteMemberFromModal').addEventListener('click', function() {
+        if (!currentMemberDetailId) return;
+        if (!confirm('Delete this member permanently?')) return;
+        db.collection('members').doc(currentMemberDetailId).delete()
+            .then(function() {
+                var m = getMemberDetailModal();
+                if (m) m.hide();
+                currentMemberDetailId = null;
+                loadAllMembers();
+                loadOverviewStats();
+            })
+            .catch(function(err) { alert(err.message); });
     });
 }
 
-window.approveTrainer = function(uid) {
-    db.collection('trainers').doc(uid).update({ approvalStatus: 'approved' })
+/* ─── Trainer applications (card grid + search + filter + modal) ─── */
+function loadTrainerApplications() {
+    var grid = $('trainerAppsGrid');
+    if (!grid) return;
+    grid.innerHTML = '<div class="col-12 text-center text-muted py-4">Loading trainers…</div>';
+
+    fetchTrainersOrdered().then(function(rows) {
+        allTrainersCache = [];
+        allTrainersById = {};
+        rows.forEach(function(doc) {
+            var item = { id: doc.id, data: doc.data() };
+            allTrainersCache.push(item);
+            allTrainersById[doc.id] = item;
+        });
+        renderTrainersGrid();
+    }).catch(function() {
+        grid.innerHTML = '<div class="col-12 text-center text-danger py-4">Could not load trainers.</div>';
+    });
+}
+
+function renderTrainersGrid() {
+    var grid = $('trainerAppsGrid');
+    if (!grid) return;
+    var q = ($('trainerSearch') && $('trainerSearch').value || '').trim().toLowerCase();
+    var statusFilter = ($('trainerStatusFilter') && $('trainerStatusFilter').value) || '';
+
+    var filtered = allTrainersCache.filter(function(item) {
+        var d = item.data;
+        var st = d.approvalStatus || 'pending';
+        if (statusFilter && st !== statusFilter) return false;
+        if (q) {
+            var name = (d.displayName || '').toLowerCase();
+            if (name.indexOf(q) === -1) return false;
+        }
+        return true;
+    });
+
+    if ($('trainerCount')) $('trainerCount').textContent = '(' + filtered.length + ')';
+
+    grid.innerHTML = '';
+    if (!filtered.length) {
+        grid.innerHTML = '<div class="col-12 text-center text-muted py-4">' +
+            (q || statusFilter ? 'No trainers match the filter.' : 'No trainer applications yet.') + '</div>';
+        return;
+    }
+
+    var statusColors = { approved: 'success', pending: 'warning', rejected: 'danger' };
+
+    filtered.forEach(function(item) {
+        var d = item.data;
+        var name = d.displayName || '—';
+        var initials = getInitials(name, d.email);
+        var st = d.approvalStatus || 'pending';
+        var hasPhoto = d.photoURL && /^https?:\/\//i.test(d.photoURL);
+        var avatar = hasPhoto
+            ? '<div class="trainer-avatar"><img src="' + escHtml(d.photoURL) + '" alt="' + escHtml(name) + '" onerror="this.parentNode.textContent=\'' + initials + '\'"></div>'
+            : '<div class="trainer-avatar">' + initials + '</div>';
+
+        var col = document.createElement('div');
+        col.className = 'col-6 col-sm-4 col-md-3 col-lg-2';
+        col.innerHTML =
+            '<div class="dash-card h-100 member-card" tabindex="0" data-id="' + item.id + '">' +
+                '<div class="card-body text-center">' +
+                    avatar +
+                    '<h6 class="text-white fw-bold mt-2 mb-1">' + escHtml(name) + '</h6>' +
+                    '<span class="badge bg-info">' + escHtml(d.specialization || '—') + '</span>' +
+                    '<div class="mt-1"><span class="badge bg-' + (statusColors[st] || 'secondary') + '">' +
+                        st.charAt(0).toUpperCase() + st.slice(1) + '</span></div>' +
+                '</div>' +
+            '</div>';
+        var card = col.querySelector('.member-card');
+        card.addEventListener('click', function() { openTrainerDetailModal(item.id); });
+        card.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                openTrainerDetailModal(item.id);
+            }
+        });
+        grid.appendChild(col);
+    });
+}
+
+if ($('trainerSearch')) {
+    $('trainerSearch').addEventListener('input', renderTrainersGrid);
+}
+if ($('trainerStatusFilter')) {
+    $('trainerStatusFilter').addEventListener('change', renderTrainersGrid);
+}
+if ($('btnRefreshTrainers')) {
+    $('btnRefreshTrainers').addEventListener('click', loadTrainerApplications);
+}
+
+function getTrainerDetailModal() {
+    var el = $('trainerDetailModal');
+    if (!el || !window.bootstrap) return null;
+    if (typeof bootstrap.Modal.getOrCreateInstance === 'function') {
+        trainerDetailModalInstance = bootstrap.Modal.getOrCreateInstance(el);
+    } else if (!trainerDetailModalInstance) {
+        trainerDetailModalInstance = new bootstrap.Modal(el);
+    }
+    return trainerDetailModalInstance;
+}
+
+function openTrainerDetailModal(trainerId) {
+    var item = allTrainersById[trainerId];
+    if (!item) return;
+    currentTrainerDetailId = trainerId;
+    var d = item.data;
+    var name = d.displayName || '—';
+    var email = d.email || '—';
+    var st = d.approvalStatus || 'pending';
+    var statusColors = { approved: 'success', pending: 'warning', rejected: 'danger' };
+
+    bigAvatarInto('tdAvatar', 'tdInitials', name, email, d.photoURL);
+    if ($('tdName')) $('tdName').textContent = name;
+    if ($('tdSubtitle')) {
+        $('tdSubtitle').textContent = (d.specialization || 'Trainer') +
+            (d.experience != null ? ' · ' + d.experience + ' yrs experience' : '');
+    }
+    if ($('tdEmail')) $('tdEmail').textContent = email;
+    if ($('tdPhone')) $('tdPhone').textContent = d.phone || '—';
+    if ($('tdSpec')) $('tdSpec').textContent = d.specialization || '—';
+    if ($('tdExp')) $('tdExp').textContent = d.experience != null ? d.experience + ' year(s)' : '—';
+    if ($('tdApplied')) $('tdApplied').textContent = formatDate(d.createdAt);
+    if ($('tdStatus')) {
+        $('tdStatus').innerHTML = '<span class="badge bg-' + (statusColors[st] || 'secondary') + '">' +
+            st.charAt(0).toUpperCase() + st.slice(1) + '</span>';
+    }
+    if ($('tdQual')) $('tdQual').textContent = d.qualifications || '—';
+    if ($('tdBio')) $('tdBio').textContent = d.bio || '—';
+
+    var btnApprove = $('btnApproveTrainerFromModal');
+    var btnReject = $('btnRejectTrainerFromModal');
+    if (btnApprove) btnApprove.classList.toggle('d-none', st === 'approved');
+    if (btnReject) btnReject.classList.toggle('d-none', st === 'rejected' || st === 'approved');
+
+    var m = getTrainerDetailModal();
+    if (m) m.show();
+}
+
+function setTrainerStatus(uid, status) {
+    return db.collection('trainers').doc(uid).update({ approvalStatus: status })
         .then(function() {
             loadTrainerApplications();
             loadOverviewStats();
             populateTrainerSelect();
             loadTrainerAvailability();
         });
-};
+}
 
-window.rejectTrainer = function(uid) {
-    db.collection('trainers').doc(uid).update({ approvalStatus: 'rejected' })
-        .then(function() {
-            loadTrainerApplications();
-            loadOverviewStats();
-            populateTrainerSelect();
-            loadTrainerAvailability();
-        });
-};
-
+window.approveTrainer = function(uid) { setTrainerStatus(uid, 'approved'); };
+window.rejectTrainer = function(uid) { setTrainerStatus(uid, 'rejected'); };
 window.deleteTrainer = function(uid) {
     if (!confirm('Delete this trainer permanently?')) return;
     db.collection('trainers').doc(uid).delete()
@@ -437,24 +1260,54 @@ window.deleteTrainer = function(uid) {
         });
 };
 
-if ($('btnRefreshTrainers')) {
-    $('btnRefreshTrainers').addEventListener('click', loadTrainerApplications);
+if ($('btnApproveTrainerFromModal')) {
+    $('btnApproveTrainerFromModal').addEventListener('click', function() {
+        if (!currentTrainerDetailId) return;
+        setTrainerStatus(currentTrainerDetailId, 'approved').then(function() {
+            var m = getTrainerDetailModal();
+            if (m) m.hide();
+        });
+    });
+}
+if ($('btnRejectTrainerFromModal')) {
+    $('btnRejectTrainerFromModal').addEventListener('click', function() {
+        if (!currentTrainerDetailId) return;
+        setTrainerStatus(currentTrainerDetailId, 'rejected').then(function() {
+            var m = getTrainerDetailModal();
+            if (m) m.hide();
+        });
+    });
+}
+if ($('btnDeleteTrainerFromModal')) {
+    $('btnDeleteTrainerFromModal').addEventListener('click', function() {
+        if (!currentTrainerDetailId) return;
+        if (!confirm('Delete this trainer permanently?')) return;
+        db.collection('trainers').doc(currentTrainerDetailId).delete()
+            .then(function() {
+                var m = getTrainerDetailModal();
+                if (m) m.hide();
+                currentTrainerDetailId = null;
+                loadTrainerApplications();
+                loadOverviewStats();
+                populateTrainerSelect();
+                loadTrainerAvailability();
+            })
+            .catch(function(err) { alert(err.message); });
+    });
 }
 
-/* ─── Trainer availability cards ─── */
+/* ─── Trainer availability cards (kept original list view) ─── */
 function timePartDisplay(v) {
     if (v == null || v === '') return '';
     if (typeof v === 'string' || typeof v === 'number') return String(v);
     if (typeof v === 'object') {
         if (typeof v.toDate === 'function') {
-            try {
-                return v.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-            } catch (e) { /* ignore */ }
+            try { return v.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
+            catch (e) { /* ignore */ }
         }
         if (typeof v.seconds === 'number') {
-            try {
-                return new Date(v.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-            } catch (e2) { /* ignore */ }
+            try { return new Date(v.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
+            catch (e2) { /* ignore */ }
         }
     }
     return String(v);
@@ -480,9 +1333,7 @@ function formatSlotLabel(s) {
 
 function collectSlotLabels(dayData) {
     if (dayData == null) return [];
-    if (typeof dayData === 'string' || typeof dayData === 'number') {
-        return [String(dayData)];
-    }
+    if (typeof dayData === 'string' || typeof dayData === 'number') return [String(dayData)];
     if (typeof dayData !== 'object') return [];
     if (dayData.available === false) return [];
     var slots = dayData.slots != null ? dayData.slots : dayData.times != null ? dayData.times : null;
@@ -496,9 +1347,7 @@ function collectSlotLabels(dayData) {
             var v = slots[k];
             return v === true || v === false || v === 1 || v === 0;
         });
-        if (boolMap) {
-            return keys.filter(function(k) { return !!slots[k]; });
-        }
+        if (boolMap) return keys.filter(function(k) { return !!slots[k]; });
         var indexKeys = keys.length && keys.every(function(k) { return /^\d+$/.test(k); });
         if (indexKeys) {
             return keys.sort(function(a, b) { return Number(a) - Number(b); })
@@ -511,19 +1360,11 @@ function collectSlotLabels(dayData) {
 }
 
 function formatDaySlots(dayData) {
-    if (dayData == null) {
-        return '<span class="time-chip off">—</span>';
-    }
-    if (typeof dayData === 'string') {
-        return '<span class="time-chip">' + escHtml(dayData) + '</span>';
-    }
-    if (typeof dayData === 'object' && dayData.available === false) {
-        return '<span class="time-chip off">Off</span>';
-    }
+    if (dayData == null) return '<span class="time-chip off">—</span>';
+    if (typeof dayData === 'string') return '<span class="time-chip">' + escHtml(dayData) + '</span>';
+    if (typeof dayData === 'object' && dayData.available === false) return '<span class="time-chip off">Off</span>';
     var labels = collectSlotLabels(dayData);
-    if (!labels.length) {
-        return '<span class="time-chip off">Not set</span>';
-    }
+    if (!labels.length) return '<span class="time-chip off">Not set</span>';
     return labels.map(function(l) {
         return '<span class="time-chip">' + escHtml(l) + '</span>';
     }).join(' ');
@@ -559,19 +1400,19 @@ function loadTrainerAvailability() {
                 if (!avail || typeof avail !== 'object') {
                     var row = document.createElement('div');
                     row.className = 'trainer-avail-day unavailable';
-                    row.innerHTML = '<span class="day-label">·</span><span class="text-muted small">No weekly schedule saved yet. Trainers can store an <strong>availability</strong> object on their profile.</span>';
+                    row.innerHTML = '<span class="day-label">·</span><span class="text-muted small">No weekly schedule saved yet.</span>';
                     week.appendChild(row);
                 } else {
                     DAYS.forEach(function(day) {
-                        var row = document.createElement('div');
+                        var rowEl = document.createElement('div');
                         var dayVal = avail[day] || avail[day.toLowerCase()];
                         var has = dayVal != null && dayVal !== '' && dayVal !== false;
                         if (has && typeof dayVal === 'object' && dayVal.available === false) has = false;
-                        row.className = 'trainer-avail-day' + (has ? ' available' : ' unavailable');
-                        row.innerHTML =
+                        rowEl.className = 'trainer-avail-day' + (has ? ' available' : ' unavailable');
+                        rowEl.innerHTML =
                             '<span class="day-label">' + day.slice(0, 3) + '</span>' +
                             '<div class="d-flex flex-wrap gap-1">' + formatDaySlots(dayVal) + '</div>';
-                        week.appendChild(row);
+                        week.appendChild(rowEl);
                     });
                 }
                 body.appendChild(week);
@@ -589,7 +1430,7 @@ if ($('btnRefreshTrainerAvail')) {
     $('btnRefreshTrainerAvail').addEventListener('click', loadTrainerAvailability);
 }
 
-/* ─── Classes CRUD ─── */
+/* ─── Classes (card grid + search + filter + modal) ─── */
 var classModalInstance = null;
 
 function getClassModal() {
@@ -601,6 +1442,17 @@ function getClassModal() {
         classModalInstance = new bootstrap.Modal(el);
     }
     return classModalInstance;
+}
+
+function getClassDetailModal() {
+    var el = $('classDetailModal');
+    if (!el || !window.bootstrap) return null;
+    if (typeof bootstrap.Modal.getOrCreateInstance === 'function') {
+        classDetailModalInstance = bootstrap.Modal.getOrCreateInstance(el);
+    } else if (!classDetailModalInstance) {
+        classDetailModalInstance = new bootstrap.Modal(el);
+    }
+    return classDetailModalInstance;
 }
 
 function populateTrainerSelect() {
@@ -623,48 +1475,150 @@ function populateTrainerSelect() {
     });
 }
 
-function scheduleLabel(c) {
-    var s = c.schedule || {};
-    var day = s.day || '—';
-    var time = s.time || '—';
-    var dur = s.duration ? s.duration + ' min' : '';
-    return escHtml(day + ' ' + time + (dur ? ' · ' + dur : ''));
-}
-
 function loadClassesAdmin() {
-    var tbody = $('classesBody');
-    if (!tbody) return;
-    tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">Loading…</td></tr>';
+    var grid = $('classesGrid');
+    if (!grid) return;
+    grid.innerHTML = '<div class="col-12 text-center text-muted py-4">Loading classes…</div>';
 
     db.collection('classes').get()
         .then(function(snap) {
-            tbody.innerHTML = '';
-            if (snap.empty) {
-                tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">No classes yet. Add one to get started.</td></tr>';
-                return;
-            }
+            allClassesCache = [];
+            allClassesById = {};
             snap.forEach(function(doc) {
-                var c = doc.data();
-                var st = c.status || 'active';
-                var stColors = { active: 'success', cancelled: 'secondary', draft: 'warning' };
-                var tr = document.createElement('tr');
-                tr.innerHTML =
-                    '<td>' + escHtml(c.name || '—') + '</td>' +
-                    '<td>' + escHtml(c.type || '—') + '</td>' +
-                    '<td class="small">' + scheduleLabel(c) + '</td>' +
-                    '<td>' + escHtml(c.trainerName || '—') + '</td>' +
-                    '<td>' + escHtml(String(c.capacity != null ? c.capacity : '—')) + '</td>' +
-                    '<td><span class="badge bg-' + (stColors[st] || 'secondary') + '">' + escHtml(st) + '</span></td>' +
-                    '<td>' +
-                        '<button class="btn btn-sm btn-outline-light me-1" onclick="editClass(\'' + doc.id + '\')" title="Edit"><i class="fas fa-pen"></i></button>' +
-                        '<button class="btn btn-sm btn-outline-danger" onclick="deleteClass(\'' + doc.id + '\')" title="Delete"><i class="fas fa-trash"></i></button>' +
-                    '</td>';
-                tbody.appendChild(tr);
+                var item = { id: doc.id, data: doc.data() };
+                allClassesCache.push(item);
+                allClassesById[doc.id] = item;
             });
+            allClassesCache.sort(function(a, b) {
+                return tsSeconds(b.data.createdAt) - tsSeconds(a.data.createdAt);
+            });
+            renderClassesGrid();
         })
         .catch(function() {
-            tbody.innerHTML = '<tr><td colspan="7" class="text-center text-danger">Could not load classes.</td></tr>';
+            grid.innerHTML = '<div class="col-12 text-center text-danger py-4">Could not load classes.</div>';
         });
+}
+
+function renderClassesGrid() {
+    var grid = $('classesGrid');
+    if (!grid) return;
+    var q = ($('classSearch') && $('classSearch').value || '').trim().toLowerCase();
+    var statusFilter = ($('classStatusFilter') && $('classStatusFilter').value) || '';
+
+    var filtered = allClassesCache.filter(function(item) {
+        var c = item.data;
+        var st = c.status || 'active';
+        if (statusFilter && st !== statusFilter) return false;
+        if (q) {
+            var hay = ((c.name || '') + ' ' + (c.type || '')).toLowerCase();
+            if (hay.indexOf(q) === -1) return false;
+        }
+        return true;
+    });
+
+    if ($('classCount')) $('classCount').textContent = '(' + filtered.length + ')';
+
+    grid.innerHTML = '';
+    if (!filtered.length) {
+        grid.innerHTML = '<div class="col-12 text-center text-muted py-4">' +
+            (q || statusFilter ? 'No classes match the filter.' : 'No classes yet. Add one to get started.') + '</div>';
+        return;
+    }
+
+    var statusColors = { active: 'success', cancelled: 'secondary', draft: 'warning' };
+
+    filtered.forEach(function(item) {
+        var c = item.data;
+        var st = c.status || 'active';
+        var dayTxt = c.schedule && c.schedule.day ? c.schedule.day : '—';
+        var timeTxt = c.schedule && c.schedule.time ? c.schedule.time : '—';
+
+        var col = document.createElement('div');
+        col.className = 'col-6 col-sm-4 col-md-3 col-lg-2';
+        col.innerHTML =
+            '<div class="dash-card h-100 member-card" tabindex="0" data-id="' + item.id + '">' +
+                '<div class="card-body text-center">' +
+                    '<div class="class-avatar"><i class="fas fa-dumbbell"></i></div>' +
+                    '<h6 class="text-white fw-bold mt-2 mb-1">' + escHtml(c.name || 'Untitled') + '</h6>' +
+                    '<span class="badge bg-info">' + escHtml(c.type || '—') + '</span>' +
+                    '<div class="member-meta small mt-1">' + escHtml(dayTxt) + ' · ' + escHtml(timeTxt) + '</div>' +
+                    '<div class="mt-1"><span class="badge bg-' + (statusColors[st] || 'secondary') + '">' + escHtml(st) + '</span></div>' +
+                '</div>' +
+            '</div>';
+        var card = col.querySelector('.member-card');
+        card.addEventListener('click', function() { openClassDetailModal(item.id); });
+        card.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                openClassDetailModal(item.id);
+            }
+        });
+        grid.appendChild(col);
+    });
+}
+
+if ($('classSearch')) {
+    $('classSearch').addEventListener('input', renderClassesGrid);
+}
+if ($('classStatusFilter')) {
+    $('classStatusFilter').addEventListener('change', renderClassesGrid);
+}
+
+function openClassDetailModal(classId) {
+    var item = allClassesById[classId];
+    if (!item) return;
+    currentClassDetailId = classId;
+    var c = item.data;
+    var st = c.status || 'active';
+    var statusColors = { active: 'success', cancelled: 'secondary', draft: 'warning' };
+
+    if ($('cdName')) $('cdName').textContent = c.name || 'Untitled';
+    if ($('cdSubtitle')) $('cdSubtitle').textContent = (c.type || '—');
+    if ($('cdType')) $('cdType').innerHTML = '<span class="badge bg-info">' + escHtml(c.type || '—') + '</span>';
+    if ($('cdStatus')) $('cdStatus').innerHTML = '<span class="badge bg-' + (statusColors[st] || 'secondary') + '">' + escHtml(st) + '</span>';
+    if ($('cdDay')) $('cdDay').textContent = (c.schedule && c.schedule.day) || '—';
+    if ($('cdTime')) $('cdTime').textContent = (c.schedule && c.schedule.time) || '—';
+    if ($('cdDuration')) $('cdDuration').textContent = (c.schedule && c.schedule.duration) ? c.schedule.duration + ' min' : '—';
+    if ($('cdTrainer')) $('cdTrainer').textContent = c.trainerName || '—';
+
+    var cap = c.capacity || 0;
+    var enr = c.enrolled || 0;
+    if ($('cdCapacity')) $('cdCapacity').textContent = enr + ' / ' + cap;
+    var bar = $('cdProgressBar');
+    if (bar) {
+        bar.classList.remove('warn', 'expired');
+        var pct = cap > 0 ? Math.min(100, (enr / cap) * 100) : 0;
+        bar.style.width = pct.toFixed(1) + '%';
+        if (pct >= 100) bar.classList.add('expired');
+        else if (pct >= 80) bar.classList.add('warn');
+    }
+    if ($('cdDesc')) $('cdDesc').textContent = c.description || '—';
+
+    var m = getClassDetailModal();
+    if (m) m.show();
+}
+
+if ($('btnDeleteClassFromModal')) {
+    $('btnDeleteClassFromModal').addEventListener('click', function() {
+        if (!currentClassDetailId) return;
+        if (!confirm('Delete this class?')) return;
+        db.collection('classes').doc(currentClassDetailId).delete()
+            .then(function() {
+                var m = getClassDetailModal();
+                if (m) m.hide();
+                currentClassDetailId = null;
+                loadClassesAdmin();
+                loadOverviewStats();
+            });
+    });
+}
+if ($('btnEditClassFromModal')) {
+    $('btnEditClassFromModal').addEventListener('click', function() {
+        if (!currentClassDetailId) return;
+        var m = getClassDetailModal();
+        if (m) m.hide();
+        window.editClass(currentClassDetailId);
+    });
 }
 
 window.editClass = function(id) {
@@ -688,15 +1642,6 @@ window.editClass = function(id) {
         var m = getClassModal();
         if (m) m.show();
     });
-};
-
-window.deleteClass = function(id) {
-    if (!confirm('Delete this class?')) return;
-    db.collection('classes').doc(id).delete()
-        .then(function() {
-            loadClassesAdmin();
-            loadOverviewStats();
-        });
 };
 
 function openAddClassModal() {
@@ -753,9 +1698,7 @@ function updateTrainerAvailPreview() {
 }
 
 if ($('btnAddClass')) {
-    $('btnAddClass').addEventListener('click', function() {
-        openAddClassModal();
-    });
+    $('btnAddClass').addEventListener('click', function() { openAddClassModal(); });
 }
 if ($('btnRefreshClasses')) {
     $('btnRefreshClasses').addEventListener('click', loadClassesAdmin);
@@ -766,10 +1709,7 @@ if ($('classTrainer')) {
 if ($('btnSaveClass')) {
     $('btnSaveClass').addEventListener('click', function() {
         var name = $('className').value.trim();
-        if (!name) {
-            alert('Please enter a class name.');
-            return;
-        }
+        if (!name) { alert('Please enter a class name.'); return; }
         var tid = $('classTrainer').value;
         var tname = tid ? (approvedTrainerNames[tid] || '') : '';
         if (tid && !tname) {
@@ -806,13 +1746,11 @@ if ($('btnSaveClass')) {
             if (m) m.hide();
             loadClassesAdmin();
             loadOverviewStats();
-        }).catch(function(err) {
-            alert(err.message);
-        });
+        }).catch(function(err) { alert(err.message); });
     });
 }
 
-/* ─── Admin chat — direct admin↔trainer threads (no rooms) ─── */
+/* ─── Admin chat ─── */
 var activeChatTrainerId = null;
 var activeChatTrainerName = '';
 
@@ -842,17 +1780,22 @@ function loadAdminChatTrainers() {
                 rows.push({
                     id: doc.id,
                     name: (d.displayName || d.email || 'Trainer').trim(),
-                    spec: d.specialization || ''
+                    spec: d.specialization || '',
+                    photoURL: d.photoURL || ''
                 });
             });
             rows.sort(function(a, b) { return a.name.localeCompare(b.name); });
             rows.forEach(function(t) {
                 var initials = (t.name || 'T').split(' ').map(function(w) { return w[0]; }).join('').substring(0, 2).toUpperCase();
+                var hasPhoto = t.photoURL && /^https?:\/\//i.test(t.photoURL);
+                var avatar = hasPhoto
+                    ? '<div class="chat-room-avatar"><img src="' + escHtml(t.photoURL) + '" alt="' + escHtml(t.name) + '" onerror="this.parentNode.textContent=\'' + initials + '\'"></div>'
+                    : '<div class="chat-room-avatar">' + escHtml(initials) + '</div>';
                 var div = document.createElement('div');
                 div.className = 'chat-room-item' + (activeChatTrainerId === t.id ? ' active' : '');
                 div.dataset.trainerId = t.id;
                 div.innerHTML =
-                    '<div class="chat-room-avatar">' + escHtml(initials) + '</div>' +
+                    avatar +
                     '<div class="chat-room-info">' +
                         '<div class="chat-room-name">' + escHtml(t.name) +
                             (t.spec ? ' <span class="chat-spec-badge">' + escHtml(t.spec) + '</span>' : '') +
@@ -954,3 +1897,444 @@ if ($('chatInput')) {
         if (e.key === 'Enter') sendAdminChatMessage();
     });
 }
+
+/* ═══ Admin booking check-in (QR / reference — same payload as trainer) ═══ */
+
+function parseAdminBookingRefFromScan(raw) {
+    var s = String(raw || '').trim();
+    if (s.indexOf('GymDD|') === 0) s = s.slice(6).trim();
+    return s;
+}
+
+function adminCheckinCodeKey(refRaw) {
+    var s = parseAdminBookingRefFromScan(refRaw);
+    var digits = s.replace(/\s/g, '');
+    if (/^\d+$/.test(digits)) return digits;
+    return s;
+}
+
+function stopAdminQrScanner() {
+    if (!adminHtml5QrCode) return;
+    var inst = adminHtml5QrCode;
+    adminHtml5QrCode = null;
+    inst.stop().then(function() {
+        inst.clear();
+    }).catch(function() {
+        try { inst.clear(); } catch (e) { /* ignore */ }
+    });
+}
+
+function adminCheckinSetResult(html) {
+    var el = $('adminCheckinResult');
+    if (el) el.innerHTML = html;
+}
+
+function adminStartQrScanner() {
+    if (typeof Html5Qrcode === 'undefined') {
+        alert('QR scanner library did not load. Enter the reference number manually.');
+        return;
+    }
+    var hostId = 'adminQrReader';
+    if (!$(hostId)) return;
+
+    stopAdminQrScanner();
+    adminHtml5QrCode = new Html5Qrcode(hostId);
+    adminHtml5QrCode.start(
+        { facingMode: 'environment' },
+        { fps: 10, qrbox: { width: 220, height: 220 } },
+        function(decodedText) {
+            stopAdminQrScanner();
+            adminResolveBooking(decodedText);
+        },
+        function() { /* frame discard */ }
+    ).catch(function(err) {
+        adminHtml5QrCode = null;
+        alert(err.message || 'Could not start camera. Check permissions.');
+    });
+}
+
+function adminRenderBookingDetail(bookingId, b) {
+    var st = (b.status || '').trim();
+    var sessionOn = b.sessionStarted === true;
+    var refNum = b.bookingCode != null ? String(b.bookingCode) : '—';
+
+    var summary =
+        '<div class="admin-checkin-highlight border border-secondary rounded p-3 mb-3 bg-dark bg-opacity-25">' +
+            '<div class="row g-2">' +
+                '<div class="col-sm-6">' +
+                    '<span class="text-muted small text-uppercase d-block">Class</span>' +
+                    '<div class="fw-bold">' + escHtml(b.className || '—') + '</div>' +
+                '</div>' +
+                '<div class="col-sm-6">' +
+                    '<span class="text-muted small text-uppercase d-block">Trainer</span>' +
+                    '<div class="fw-bold">' + escHtml(b.trainerName || '—') + '</div>' +
+                '</div>' +
+                '<div class="col-sm-6">' +
+                    '<span class="text-muted small text-uppercase d-block">Date</span>' +
+                    '<div class="fw-semibold">' + escHtml(b.date || '—') + '</div>' +
+                '</div>' +
+                '<div class="col-sm-6">' +
+                    '<span class="text-muted small text-uppercase d-block">Class time</span>' +
+                    '<div class="fw-semibold">' + escHtml(b.time || '—') + '</div>' +
+                '</div>' +
+            '</div>' +
+        '</div>';
+
+    var lines = [
+        '<div class="mb-2"><span class="text-muted small text-uppercase">Reference</span><div class="fw-bold fs-5">' + escHtml(refNum) + '</div></div>',
+        '<div class="mb-2"><span class="text-muted small text-uppercase">Member</span><div class="fw-semibold">' + escHtml(b.memberName || '—') + '</div>' +
+            '<div class="small text-muted">' + escHtml(b.memberEmail || '') + '</div></div>',
+        '<div class="mb-3"><span class="text-muted small text-uppercase">Status</span><div>' + escHtml(st || '—') +
+            (sessionOn ? ' <span class="badge bg-success ms-1">Session started</span>' : '') + '</div></div>'
+    ];
+
+    adminCheckinSetResult(
+        '<div class="admin-checkin-detail">' + summary + lines.join('') + '</div>'
+    );
+}
+
+function adminResolveBooking(refRaw) {
+    if (!currentUid) return;
+    var codeKey = adminCheckinCodeKey(refRaw);
+    if (!codeKey) {
+        adminCheckinSetResult('<p class="text-warning small mb-0">Enter or scan a valid reference.</p>');
+        return;
+    }
+
+    adminCheckinSetResult('<p class="text-muted small mb-0"><i class="fas fa-spinner fa-spin me-2"></i>Looking up…</p>');
+
+    db.collection('bookingLookups').doc(codeKey).get()
+        .then(function(lsnap) {
+            if (lsnap.exists) {
+                var L = lsnap.data();
+                return db.collection('bookings').doc(L.bookingId).get().then(function(bsnap) {
+                    if (!bsnap.exists) {
+                        adminCheckinSetResult('<p class="text-danger small mb-0">Booking record missing.</p>');
+                        return;
+                    }
+                    adminRenderBookingDetail(bsnap.id, bsnap.data());
+                });
+            }
+            var num = parseInt(codeKey, 10);
+            if (isNaN(num)) {
+                adminCheckinSetResult('<p class="text-warning small mb-0">No booking found for this reference.</p>');
+                return null;
+            }
+            return db.collection('bookings').where('bookingCode', '==', num).limit(1).get()
+                .then(function(q) {
+                    if (q.empty) {
+                        adminCheckinSetResult('<p class="text-warning small mb-0">No booking found for this reference.</p>');
+                        return;
+                    }
+                    var doc = q.docs[0];
+                    adminRenderBookingDetail(doc.id, doc.data());
+                });
+        })
+        .catch(function(err) {
+            console.error(err);
+            adminCheckinSetResult('<p class="text-danger small mb-0">' + escHtml(err.message || 'Lookup failed.') + '</p>');
+        });
+}
+
+if ($('btnAdminLookupRef')) {
+    $('btnAdminLookupRef').addEventListener('click', function() {
+        var inp = $('adminBookingRefInput');
+        adminResolveBooking(inp ? inp.value : '');
+    });
+}
+if ($('adminBookingRefInput')) {
+    $('adminBookingRefInput').addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            adminResolveBooking(this.value);
+        }
+    });
+}
+if ($('btnAdminScanStart')) {
+    $('btnAdminScanStart').addEventListener('click', function() { adminStartQrScanner(); });
+}
+if ($('btnAdminScanStop')) {
+    $('btnAdminScanStop').addEventListener('click', function() { stopAdminQrScanner(); });
+}
+
+/* ═══ Weekly trainer class log (Firestore: trainerClassCompletions) ═══ */
+function adminPad2(n) {
+    return (n < 10 ? '0' : '') + n;
+}
+
+function adminFormatYMD(d) {
+    return d.getFullYear() + '-' + adminPad2(d.getMonth() + 1) + '-' + adminPad2(d.getDate());
+}
+
+function adminParseISODateLocal(iso) {
+    var p = String(iso || '').split('-');
+    if (p.length !== 3) return null;
+    var y = parseInt(p[0], 10);
+    var m = parseInt(p[1], 10) - 1;
+    var day = parseInt(p[2], 10);
+    if (isNaN(y) || isNaN(m) || isNaN(day)) return null;
+    return new Date(y, m, day);
+}
+
+function adminStartOfWeekMonday(d) {
+    var x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    var day = x.getDay();
+    var diff = day === 0 ? -6 : 1 - day;
+    x.setDate(x.getDate() + diff);
+    return x;
+}
+
+function adminEndOfWeekSunday(monday) {
+    var d = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate());
+    d.setDate(d.getDate() + 6);
+    return d;
+}
+
+function adminScheduleDayToJsWeekday(dayStr) {
+    if (dayStr == null || dayStr === '') return null;
+    var k = String(dayStr).trim().toLowerCase().replace(/\./g, '');
+    var map = {
+        sun: 0, sunday: 0,
+        mon: 1, monday: 1,
+        tue: 2, tues: 2, tuesday: 2,
+        wed: 3, weds: 3, wednesday: 3,
+        thu: 4, thur: 4, thurs: 4, thursday: 4,
+        fri: 5, friday: 5,
+        sat: 6, saturday: 6
+    };
+    if (map[k] !== undefined) return map[k];
+    var short = k.slice(0, 3);
+    if (map[short] !== undefined) return map[short];
+    return null;
+}
+
+function adminSessionDateForClassInWeek(weekMonday, scheduleDayRaw) {
+    var wd = adminScheduleDayToJsWeekday(scheduleDayRaw);
+    if (wd === null) return null;
+    var i;
+    for (i = 0; i < 7; i++) {
+        var d = new Date(weekMonday.getFullYear(), weekMonday.getMonth(), weekMonday.getDate());
+        d.setDate(d.getDate() + i);
+        if (d.getDay() === wd) return adminFormatYMD(d);
+    }
+    return null;
+}
+
+function adminClassCompletionDocId(classId, sessionDate) {
+    return classId + '_' + sessionDate;
+}
+
+function adminPrettySessionDate(sessionDateIso) {
+    var d = adminParseISODateLocal(sessionDateIso);
+    return d ? d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }) : sessionDateIso;
+}
+
+function populateAdminClassLogTrainerFilter() {
+    var sel = $('adminClassLogTrainerFilter');
+    if (!sel) return;
+    var keep = sel.value || '';
+    fetchTrainersOrdered().then(function(rows) {
+        sel.innerHTML = '<option value="">All trainers</option>';
+        rows.forEach(function(doc) {
+            var d = doc.data();
+            if ((d.approvalStatus || '') !== 'approved') return;
+            var opt = document.createElement('option');
+            opt.value = doc.id;
+            opt.textContent = (d.displayName || d.email || doc.id).trim();
+            sel.appendChild(opt);
+        });
+        sel.value = keep;
+        if (sel.value !== keep) sel.value = '';
+    });
+}
+
+function adminEffectiveSessionStatus(d) {
+    if (!d || typeof d !== 'object') return 'pending';
+    var st = String(d.sessionStatus || '').trim().toLowerCase();
+    if (st === 'completed' || st === 'cancelled' || st === 'delayed' || st === 'missed') return st;
+    if (d.completedAt) return 'completed';
+    return 'pending';
+}
+
+function adminSessionStatusBadgeHtml(st) {
+    switch (st) {
+        case 'completed':
+            return '<span class="badge bg-success">Completed</span>';
+        case 'missed':
+            return '<span class="badge bg-danger">Missed</span>';
+        case 'cancelled':
+            return '<span class="badge bg-secondary">Cancel</span>';
+        case 'delayed':
+            return '<span class="badge bg-warning text-dark">Delay</span>';
+        default:
+            return '<span class="badge bg-secondary text-dark">Pending</span>';
+    }
+}
+
+function adminTimestampSeconds(ts) {
+    if (!ts) return 0;
+    if (typeof ts.seconds === 'number') return ts.seconds;
+    if (typeof ts.toMillis === 'function') return Math.floor(ts.toMillis() / 1000);
+    return 0;
+}
+
+function adminFormatCompletedTime(ts) {
+    var sec = adminTimestampSeconds(ts);
+    if (!sec) return '—';
+    var d = new Date(sec * 1000);
+    return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+function appendAdminClassLogRow(tbody, trainerName, className, sessionDateIso, scheduleTimeStr, comp, orphanTip) {
+    var st = adminEffectiveSessionStatus(comp);
+    var noteRaw = comp && comp.notes ? String(comp.notes).trim() : '';
+    var noteDisplay = orphanTip
+        ? (noteRaw ? escHtml(noteRaw) + ' ' : '') + '<small class="text-muted">' + escHtml(orphanTip) + '</small>'
+        : noteRaw
+          ? escHtml(noteRaw.length > 120 ? noteRaw.slice(0, 117) + '…' : noteRaw)
+          : '—';
+
+    var completedCell = '—';
+    if (st === 'completed' && comp && comp.completedAt) {
+        completedCell = escHtml(adminFormatCompletedTime(comp.completedAt));
+    }
+
+    var dayCell = escHtml(adminPrettySessionDate(sessionDateIso));
+    if (scheduleTimeStr && String(scheduleTimeStr).trim()) {
+        dayCell += '<br><small class="text-muted">' + escHtml(String(scheduleTimeStr).trim()) + '</small>';
+    }
+
+    var classCell = escHtml(className || '—');
+
+    var tr = document.createElement('tr');
+    tr.innerHTML =
+        '<td>' + escHtml(trainerName) + '</td>' +
+        '<td>' + classCell + '</td>' +
+        '<td>' + dayCell + '</td>' +
+        '<td>' + adminSessionStatusBadgeHtml(st) + '</td>' +
+        '<td class="small text-muted font-monospace">' + completedCell + '</td>' +
+        '<td class="small">' + noteDisplay + '</td>';
+    tbody.appendChild(tr);
+}
+
+function loadAdminTrainerClassTracking() {
+    var tbody = $('adminClassTrackingBody');
+    var lbl = $('adminClassLogWeekLabel');
+    var selFilter = $('adminClassLogTrainerFilter');
+    var filterTid = selFilter ? (selFilter.value || '').trim() : '';
+    if (!tbody) return;
+
+    var base = new Date();
+    var mon = adminStartOfWeekMonday(base);
+    mon.setDate(mon.getDate() + adminClassLogWeekOffset * 7);
+    var sun = adminEndOfWeekSunday(mon);
+    var w0 = adminFormatYMD(mon);
+    var w1 = adminFormatYMD(sun);
+
+    if (lbl) {
+        lbl.textContent =
+            mon.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) +
+            ' – ' +
+            sun.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    }
+
+    tbody.innerHTML =
+        '<tr><td colspan="6" class="text-center text-muted py-4">Loading weekly log…</td></tr>';
+
+    Promise.all([
+        db.collection('classes').get(),
+        db.collection('trainerClassCompletions')
+            .where('sessionDate', '>=', w0)
+            .where('sessionDate', '<=', w1)
+            .get()
+    ])
+        .then(function(parts) {
+            var snapClasses = parts[0];
+            var snapComp = parts[1];
+            var compById = {};
+            snapComp.forEach(function(doc) {
+                compById[doc.id] = doc.data();
+            });
+            var usedComp = {};
+
+            tbody.innerHTML = '';
+
+            snapClasses.forEach(function(doc) {
+                var c = doc.data();
+                if ((c.status || 'active') !== 'active') return;
+                var tid = (c.trainerId || '').trim();
+                if (!tid) return;
+                if (filterTid && tid !== filterTid) return;
+                var sessionDate = adminSessionDateForClassInWeek(mon, (c.schedule || {}).day);
+                if (!sessionDate) return;
+                var did = adminClassCompletionDocId(doc.id, sessionDate);
+                usedComp[did] = true;
+                var comp = compById[did];
+                var tnm = ((c.trainerName || '').trim() || '(set trainer name on class)');
+                appendAdminClassLogRow(
+                    tbody,
+                    tnm,
+                    (c.name || '').trim(),
+                    sessionDate,
+                    (c.schedule || {}).time || '',
+                    comp || null,
+                    ''
+                );
+            });
+
+            snapComp.forEach(function(doc) {
+                if (usedComp[doc.id]) return;
+                var d = doc.data();
+                var tid = (d.trainerId || '').trim();
+                if (filterTid && tid !== filterTid) return;
+                appendAdminClassLogRow(
+                    tbody,
+                    (d.trainerName || '').trim() || '(trainer)',
+                    d.className || d.classId || '—',
+                    d.sessionDate,
+                    d.time || '—',
+                    d,
+                    'outside current class template'
+                );
+            });
+
+            if (!tbody.querySelector('tr')) {
+                tbody.innerHTML =
+                    '<tr><td colspan="6" class="text-muted text-center py-4">No sessions this week.</td></tr>';
+            }
+        })
+        .catch(function(err) {
+            console.error(err);
+            tbody.innerHTML =
+                '<tr><td colspan="6" class="text-danger text-center py-4">Could not load class log.</td></tr>';
+        });
+}
+
+function bindAdminClassLogControls() {
+    if ($('btnAdminClassLogPrev')) {
+        $('btnAdminClassLogPrev').addEventListener('click', function() {
+            adminClassLogWeekOffset--;
+            loadAdminTrainerClassTracking();
+        });
+    }
+    if ($('btnAdminClassLogNext')) {
+        $('btnAdminClassLogNext').addEventListener('click', function() {
+            adminClassLogWeekOffset++;
+            loadAdminTrainerClassTracking();
+        });
+    }
+    if ($('btnAdminClassLogToday')) {
+        $('btnAdminClassLogToday').addEventListener('click', function() {
+            adminClassLogWeekOffset = 0;
+            loadAdminTrainerClassTracking();
+        });
+    }
+    if ($('btnRefreshClassTracking')) {
+        $('btnRefreshClassTracking').addEventListener('click', loadAdminTrainerClassTracking);
+    }
+    if ($('adminClassLogTrainerFilter')) {
+        $('adminClassLogTrainerFilter').addEventListener('change', loadAdminTrainerClassTracking);
+    }
+}
+
+bindAdminClassLogControls();

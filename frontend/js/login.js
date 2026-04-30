@@ -100,7 +100,6 @@ if (registerForm) {
                     email: email,
                     phone: phone,
                     plan: 'Basic',
-                    approvalStatus: 'pending',
                     createdAt: firebase.firestore.FieldValue.serverTimestamp()
                 }).then(function() { return cred.user.sendEmailVerification(); });
             })
