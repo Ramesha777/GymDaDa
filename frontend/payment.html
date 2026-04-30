@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Checkout | GymDD</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<link rel="stylesheet" href="CSS/payment.css">
+<link rel="icon" type="image/png" href="images/logo.png">
+</head>
+<body>
+
+<!-- ─── Slim checkout header ─── -->
+<header class="pay-topbar">
+    <a href="index.html" class="pay-brand">
+        <img src="images/logo.png" alt="GymDD">
+        <span>GymDD <small>Checkout</small></span>
+    </a>
+    <div class="pay-topbar-right">
+        <div class="pay-user" id="payUser" hidden>
+            <i class="fas fa-circle-user"></i>
+            <span class="pay-user-email" id="payUserEmail"></span>
+            <button class="pay-user-logout" id="payLogoutBtn" type="button" title="Sign out">
+                <i class="fas fa-right-from-bracket"></i>
+            </button>
+        </div>
+        <a href="membership.html" class="pay-back">
+            <i class="fas fa-arrow-left"></i> Back to plans
+        </a>
+    </div>
+</header>
+
+<!-- ─── DEMO BANNER ─── -->
+<div class="pay-demo-banner">
+    <i class="fas fa-flask"></i>
+    <span><strong>Demo mode:</strong> this checkout is a payment simulation. No real money will be charged.</span>
+</div>
+
+<!-- ─── AUTH LOADING ─── -->
+<section class="pay-auth-state" id="authLoading">
+    <div class="pay-auth-card">
+        <span class="pay-auth-spinner"></span>
+        <p>Checking your sign-in…</p>
+    </div>
+</section>
+
+<!-- ─── AUTH REQUIRED (not signed in) ─── -->
+<section class="pay-auth-state" id="authRequired" hidden>
+    <div class="pay-auth-card">
+        <div class="pay-auth-icon"><i class="fas fa-user-lock"></i></div>
+        <h2>Sign in to continue</h2>
+        <p>You need a member account to purchase a plan. Once signed in, you'll come right back to this checkout.</p>
+
+        <div class="pay-auth-plan" id="authPlanSummary">
+            <span class="pay-auth-plan-label">You're buying</span>
+            <strong id="authPlanName">—</strong>
+            <span class="pay-auth-plan-price" id="authPlanPrice">—</span>
+        </div>
+
+        <div class="pay-auth-actions">
+            <a href="#" id="authSignInBtn" class="pay-btn pay-btn-primary">
+                <i class="fas fa-right-to-bracket"></i> Sign In
+            </a>
+            <a href="#" id="authRegisterBtn" class="pay-btn pay-btn-ghost">
+                <i class="fas fa-user-plus"></i> Create Account
+            </a>
+        </div>
+
+        <p class="pay-auth-note">No account yet? Create one — your selected plan will be remembered.</p>
+    </div>
+</section>
+
+<!-- ─── ALREADY ON THIS EXACT PLAN ─── -->
+<section class="pay-auth-state" id="samePlanState" hidden>
+    <div class="pay-auth-card">
+        <div class="pay-auth-icon" style="background:rgba(74,222,128,0.18);color:#4ade80;">
+            <i class="fas fa-circle-check"></i>
+        </div>
+        <h2>You're already on this plan</h2>
+        <p>Your <strong id="samePlanName">—</strong> membership is currently active.
+            There's nothing more to buy right now.</p>
+        <div class="pay-auth-actions">
+            <a href="member.html" class="pay-btn pay-btn-primary">
+                <i class="fas fa-gauge-high"></i> Go to Dashboard
+            </a>
+            <a href="membership.html" class="pay-btn pay-btn-ghost">Browse other plans</a>
+        </div>
+    </div>
+</section>
+
+<!-- ─── ACTIVE *DIFFERENT* PLAN: confirm switch ─── -->
+<section class="pay-auth-state" id="planChangeConfirm" hidden>
+    <div class="pay-auth-card pay-auth-card-wide">
+        <div class="pay-auth-icon"><i class="fas fa-arrows-rotate"></i></div>
+        <h2>Switch your membership?</h2>
+        <p>You already have an active plan. Switching will replace it with your new selection.</p>
+
+        <div class="pay-change-grid">
+            <div class="pay-change-side">
+                <div class="pay-change-side-label">Current</div>
+                <strong id="currentPlanName">—</strong>
+                <span class="pay-change-side-price" id="currentPlanPrice">—</span>
+                <small class="pay-change-side-meta" id="currentPlanMeta">—</small>
+            </div>
+            <i class="fas fa-arrow-right pay-change-arrow"></i>
+            <div class="pay-change-side">
+                <div class="pay-change-side-label">New</div>
+                <strong id="newPlanName">—</strong>
+                <span class="pay-change-side-price" id="newPlanPrice">—</span>
+                <small class="pay-change-side-meta">After confirmation</small>
+            </div>
+        </div>
+
+        <div class="pay-change-note" id="changeRefundNote" hidden>
+            <i class="fas fa-coins"></i>
+            <span id="changeRefundText">—</span>
+        </div>
+
+        <div class="pay-auth-actions">
+            <button type="button" class="pay-btn pay-btn-primary" id="btnConfirmChange">
+                <i class="fas fa-check"></i> Yes, switch my plan
+            </button>
+            <a href="member.html" class="pay-btn pay-btn-ghost">
+                <i class="fas fa-arrow-left"></i> Keep current plan
+            </a>
+        </div>
+    </div>
+</section>
+
+<!-- ─── WRONG ROLE / EMAIL UNVERIFIED ─── -->
+<section class="pay-auth-state" id="authBlocked" hidden>
+    <div class="pay-auth-card">
+        <div class="pay-auth-icon error"><i class="fas fa-circle-exclamation"></i></div>
+        <h2 id="blockedTitle">Member account required</h2>
+        <p id="blockedMessage">
+            You're signed in with a non-member account. Please sign out and use a member account to buy a plan.
+        </p>
+        <div class="pay-auth-actions">
+            <button id="blockedLogoutBtn" type="button" class="pay-btn pay-btn-primary">
+                <i class="fas fa-right-from-bracket"></i> Sign Out
+            </button>
+            <a href="member.html" class="pay-btn pay-btn-ghost">Go to dashboard</a>
+        </div>
+    </div>
+</section>
+
+<!-- ─── INVALID PLAN STATE ─── -->
+<section class="pay-invalid" id="invalidState" hidden>
+    <div class="pay-invalid-card">
+        <i class="fas fa-circle-exclamation"></i>
+        <h2>Plan not found</h2>
+        <p>The plan you're trying to purchase doesn't exist or its ID is invalid.</p>
+        <a href="membership.html" class="pay-btn pay-btn-primary">Browse Membership Plans</a>
+    </div>
+</section>
+
+<!-- ─── MAIN CHECKOUT GRID ─── -->
+<main class="pay-wrap" id="checkoutWrap" hidden>
+    <div class="pay-grid">
+
+        <!-- ═══════ LEFT: ORDER SUMMARY ═══════ -->
+        <aside class="pay-summary">
+            <h2 class="pay-section-title"><i class="fas fa-receipt"></i> Order Summary</h2>
+
+            <div class="pay-plan-card" id="planCard">
+                <div class="pay-plan-head">
+                    <div class="pay-plan-icon" id="planIcon"><i class="fas fa-bolt"></i></div>
+                    <div>
+                        <span class="pay-plan-badge" id="planBadge">Starter</span>
+                        <h3 id="planName">Plan</h3>
+                    </div>
+                </div>
+                <p class="pay-plan-tagline" id="planTagline"></p>
+
+                <ul class="pay-features" id="planFeatures"></ul>
+
+                <div class="pay-period-toggle" role="tablist" aria-label="Billing period">
+                    <button class="pay-period-btn" data-period="monthly" role="tab">Monthly</button>
+                    <button class="pay-period-btn" data-period="yearly" role="tab">Yearly <span>−2 mo</span></button>
+                </div>
+
+                <code class="pay-plan-id" id="planIdLabel">ID: —</code>
+            </div>
+
+            <div class="pay-totals">
+                <div class="pay-credit-prompt" id="creditPromptBox" hidden>
+                    <div class="pay-credit-prompt-head">
+                        <i class="fas fa-wallet"></i>
+                        <span>Account credit available</span>
+                    </div>
+                    <p class="pay-credit-prompt-text" id="creditPromptText"></p>
+                    <label class="pay-credit-apply-label">
+                        <input type="checkbox" id="chkApplyAccountCredit">
+                        <span>Use my credit toward this payment</span>
+                    </label>
+                    <p class="pay-credit-prompt-foot mb-0" id="creditPromptFoot"></p>
+                </div>
+                <div class="pay-row"><span>Subtotal</span><span id="sumSubtotal">£0.00</span></div>
+                <div class="pay-row"><span>Estimated tax (8%)</span><span id="sumTax">£0.00</span></div>
+                <div class="pay-row pay-row-credit" id="creditRow" hidden>
+                    <span><i class="fas fa-coins"></i> Saved credit applied</span>
+                    <span id="sumCredit">−£0.00</span>
+                </div>
+                <div class="pay-row pay-row-total"><span>Total <small id="sumTotalLabel">per month</small></span><span id="sumTotal">£0.00</span></div>
+            </div>
+
+            <p class="pay-secure"><i class="fas fa-lock"></i> Secured simulation — no real card data is transmitted.</p>
+        </aside>
+
+        <!-- ═══════ RIGHT: PAYMENT METHODS ═══════ -->
+        <section class="pay-methods">
+            <h2 class="pay-section-title"><i class="fas fa-credit-card"></i> Payment Method</h2>
+
+            <!-- Method tabs -->
+            <div class="pay-method-tabs" role="tablist" aria-label="Payment methods">
+                <button class="pay-method-tab active" data-method="apple" role="tab" aria-selected="true">
+                    <i class="fab fa-apple-pay"></i>
+                    <span>Apple Pay</span>
+                </button>
+                <button class="pay-method-tab" data-method="google" role="tab" aria-selected="false">
+                    <i class="fab fa-google-pay"></i>
+                    <span>Google Pay</span>
+                </button>
+                <button class="pay-method-tab" data-method="visa" role="tab" aria-selected="false">
+                    <i class="fab fa-cc-visa"></i>
+                    <span>Visa Card</span>
+                </button>
+            </div>
+
+            <!-- ── APPLE PAY PANEL ── -->
+            <div class="pay-panel active" data-panel="apple">
+                <div class="pay-wallet">
+                    <div class="pay-wallet-icon pay-wallet-apple"><i class="fab fa-apple-pay"></i></div>
+                    <h3>Pay quickly with Apple Pay</h3>
+                    <p>Use Touch ID, Face ID, or your passcode. Your card details stay on your device.</p>
+                    <ul class="pay-wallet-perks">
+                        <li><i class="fas fa-shield-halved"></i> Encrypted device token</li>
+                        <li><i class="fas fa-bolt"></i> One-tap checkout</li>
+                        <li><i class="fas fa-mobile-screen"></i> Compatible with iPhone, iPad &amp; Mac</li>
+                    </ul>
+                    <button type="button" class="pay-wallet-btn pay-wallet-btn-apple" data-pay="apple">
+                        <i class="fab fa-apple-pay"></i> <span>Pay</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- ── GOOGLE PAY PANEL ── -->
+            <div class="pay-panel" data-panel="google" hidden>
+                <div class="pay-wallet">
+                    <div class="pay-wallet-icon pay-wallet-google"><i class="fab fa-google-pay"></i></div>
+                    <h3>Pay quickly with Google Pay</h3>
+                    <p>Use your Google account to pay with a saved card. Fast, secure, and private.</p>
+                    <ul class="pay-wallet-perks">
+                        <li><i class="fas fa-shield-halved"></i> Tokenized card details</li>
+                        <li><i class="fas fa-bolt"></i> One-tap checkout</li>
+                        <li><i class="fab fa-android"></i> Works on Android &amp; the web</li>
+                    </ul>
+                    <button type="button" class="pay-wallet-btn pay-wallet-btn-google" data-pay="google">
+                        <i class="fab fa-google-pay"></i> <span>Buy with</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- ── VISA CARD PANEL ── -->
+            <div class="pay-panel" data-panel="visa" hidden>
+                <!-- Live card preview -->
+                <div class="pay-card-preview">
+                    <div class="pay-card-bg"></div>
+                    <div class="pay-card-row pay-card-top">
+                        <i class="fas fa-microchip"></i>
+                        <i class="fab fa-cc-visa"></i>
+                    </div>
+                    <div class="pay-card-number" id="cardPreviewNumber">•••• •••• •••• ••••</div>
+                    <div class="pay-card-row">
+                        <div>
+                            <div class="pay-card-mini">Card holder</div>
+                            <div class="pay-card-val" id="cardPreviewName">FULL NAME</div>
+                        </div>
+                        <div>
+                            <div class="pay-card-mini">Expires</div>
+                            <div class="pay-card-val" id="cardPreviewExp">MM/YY</div>
+                        </div>
+                    </div>
+                </div>
+
+                <form id="visaForm" class="pay-form" novalidate>
+                    <div class="pay-field">
+                        <label for="cardName">Cardholder name</label>
+                        <input id="cardName" type="text" autocomplete="cc-name" placeholder="John A. Doe" required>
+                        <small class="pay-error" data-for="cardName"></small>
+                    </div>
+
+                    <div class="pay-field">
+                        <label for="cardNumber">Card number</label>
+                        <div class="pay-input-icon">
+                            <input id="cardNumber" type="text" inputmode="numeric" autocomplete="cc-number"
+                                   placeholder="4242 4242 4242 4242" maxlength="23" required>
+                            <i class="fab fa-cc-visa pay-card-brand"></i>
+                        </div>
+                        <small class="pay-error" data-for="cardNumber"></small>
+                    </div>
+
+                    <div class="pay-field-row">
+                        <div class="pay-field">
+                            <label for="cardExp">Expiry (MM/YY)</label>
+                            <input id="cardExp" type="text" inputmode="numeric" autocomplete="cc-exp"
+                                   placeholder="08/29" maxlength="5" required>
+                            <small class="pay-error" data-for="cardExp"></small>
+                        </div>
+                        <div class="pay-field">
+                            <label for="cardCvv">CVV</label>
+                            <input id="cardCvv" type="password" inputmode="numeric" autocomplete="cc-csc"
+                                   placeholder="123" maxlength="4" required>
+                            <small class="pay-error" data-for="cardCvv"></small>
+                        </div>
+                    </div>
+
+                    <div class="pay-field">
+                        <label for="cardZip">Billing ZIP / Postcode</label>
+                        <input id="cardZip" type="text" autocomplete="postal-code" placeholder="10001">
+                    </div>
+                </form>
+            </div>
+
+            <!-- ── PURCHASE BUTTON (shared) ── -->
+            <button type="button" id="btnPurchase" class="pay-btn pay-btn-primary pay-btn-purchase">
+                <span class="pay-btn-label">
+                    <i class="fas fa-lock"></i>
+                    Purchase <span id="purchaseAmount">£0.00</span>
+                </span>
+                <span class="pay-btn-spinner" hidden>
+                    <span class="pay-spinner"></span> Processing…
+                </span>
+            </button>
+
+            <p class="pay-fineprint">
+                By clicking Purchase, you agree to GymDD's
+                <a href="terms.html">Terms of Service</a>.
+                Your subscription will renew automatically — cancel any time.
+            </p>
+        </section>
+    </div>
+</main>
+
+<!-- ═══════ RESULT MODAL ═══════ -->
+<div class="pay-modal" id="resultModal" hidden role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="pay-modal-backdrop"></div>
+    <div class="pay-modal-card" id="modalCard">
+
+        <!-- Icon (swaps between flask / green-tick) -->
+        <div class="pay-modal-icon" id="modalIcon"><i class="fas fa-flask"></i></div>
+
+        <h2 id="modalTitle">Payment Simulation</h2>
+        <p id="modalBody">
+            This is only a payment simulation.<br>
+            In the future, it will be replaced by an original payment system like
+            <strong>Stripe</strong>.
+        </p>
+
+        <div class="pay-receipt" id="modalReceipt">
+            <div class="pay-receipt-row"><span>Plan</span><strong id="recPlan">—</strong></div>
+            <div class="pay-receipt-row"><span>Plan ID</span><code id="recPlanId">—</code></div>
+            <div class="pay-receipt-row"><span>Method</span><strong id="recMethod">—</strong></div>
+            <div class="pay-receipt-row"><span>Amount</span><strong id="recAmount">—</strong></div>
+            <div class="pay-receipt-row"><span>Reference</span><code id="recTxn">—</code></div>
+            <div class="pay-receipt-row" id="recStatusRow" hidden>
+                <span>Status</span>
+                <strong class="pay-status-active"><i class="fas fa-circle-check"></i> Active</strong>
+            </div>
+        </div>
+
+        <!-- Refund highlight box (only shown when downgrade has unused balance) -->
+        <div class="pay-refund-box" id="refundBox" hidden>
+            <i class="fas fa-coins"></i>
+            <div>
+                <div class="pay-refund-title">Unused balance from your previous plan</div>
+                <div class="pay-refund-amount" id="refundAmount">£0.00</div>
+                <div class="pay-refund-sub" id="refundSub">Choose what to do with it below.</div>
+            </div>
+        </div>
+
+        <!-- Inline success note (refund processed / credit saved) -->
+        <div class="pay-modal-note" id="modalSuccessNote" hidden></div>
+
+        <!-- Inline error (only shown if Confirm Payment write fails) -->
+        <div class="pay-modal-error" id="modalError" hidden></div>
+
+        <!-- ── Step 1 actions: review the simulation ── -->
+        <div class="pay-modal-actions" id="actionsReview">
+            <button type="button" class="pay-btn pay-btn-ghost" id="btnModalClose">Close</button>
+            <button type="button" class="pay-btn pay-btn-primary" id="btnConfirmPayment">
+                <span class="pay-btn-label">
+                    <i class="fas fa-check-circle"></i> Confirm Payment
+                </span>
+                <span class="pay-btn-spinner" hidden>
+                    <span class="pay-spinner"></span> Activating…
+                </span>
+            </button>
+        </div>
+
+        <!-- ── Step 2 actions: refund / save-as-credit choice ── -->
+        <div class="pay-modal-actions pay-modal-actions-refund" id="actionsRefund" hidden>
+            <button type="button" class="pay-btn pay-btn-ghost" id="btnSaveCredit">
+                <span class="pay-btn-label">
+                    <i class="fas fa-piggy-bank"></i> Save as credit
+                </span>
+                <span class="pay-btn-spinner" hidden>
+                    <span class="pay-spinner"></span> Saving…
+                </span>
+            </button>
+            <button type="button" class="pay-btn pay-btn-primary" id="btnRefund">
+                <span class="pay-btn-label">
+                    <i class="fas fa-money-bill-transfer"></i> Refund
+                </span>
+                <span class="pay-btn-spinner" hidden>
+                    <span class="pay-spinner"></span> Processing…
+                </span>
+            </button>
+        </div>
+
+        <!-- ── Step 3 actions: activation success ── -->
+        <div class="pay-modal-actions" id="actionsSuccess" hidden>
+            <a href="member.html" class="pay-btn pay-btn-primary pay-btn-full">
+                <i class="fas fa-gauge-high"></i> Go to Dashboard
+            </a>
+        </div>
+    </div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+<script type="module" src="js/payment.js"></script>
+</body>
+</html>

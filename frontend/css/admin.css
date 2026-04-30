@@ -110,6 +110,7 @@ body { font-family: 'Poppins', sans-serif; background: var(--bg); color: var(--t
 .stat-info .stat-label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px; }
 .stat-info .stat-sublabel { font-size: 11px; color: var(--muted); margin-top: 8px; line-height: 1.35; }
 
+<<<<<<< HEAD
 /* Overview: split membership revenue (gross / refunds / net) */
 .stat-box.stat-box-revenue {
     align-items: flex-start;
@@ -169,6 +170,8 @@ body { font-family: 'Poppins', sans-serif; background: var(--bg); color: var(--t
     letter-spacing: 0.02em !important;
 }
 
+=======
+>>>>>>> 6a9eb5f935a4ed07bbc7a6f53a5297badf9a37ae
 /* ── Dash card ── */
 .dash-card {
     background: var(--card); border: 1px solid var(--border);

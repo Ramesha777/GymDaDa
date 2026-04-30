@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>GymDD - Premium Fitness Center</title>
 <link rel="stylesheet" href="CSS/style.css">
+<link rel="stylesheet" href="CSS/membership.css">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700;800&display=swap" rel="stylesheet">
@@ -19,7 +20,7 @@
     <div class="nav-links" id="navLinks">
         <ul>
             <li><a href="#home" class="active">HOME</a></li>
-            <li><a href="#plans">PLANS</a></li>
+            <li><a href="membership.html">PLANS</a></li>
             <li><a href="#classes">CLASSES</a></li>
             <li><a href="#trainers">TRAINERS</a></li>
             <li><a href="#gallery">GALLERY</a></li>
@@ -34,7 +35,7 @@
 <div class="nav-backdrop" id="navBackdrop"></div>
 
 <!-- ─── HERO ─── -->
-<section id="home" class="hero" style="--hero-bg: url('images/merge2.png'); --hero-bg-mobile: url('images/merge.png');">
+<section id="home" class="hero">
     <div class="hero-content">
         <h1>Welcome to <span class="accent">GymDD</span> Fitness Center</h1>
         <p>Transform your body and mind with world-class facilities, expert trainers, and personalized fitness programs. Join thousands who have achieved their goals with us.</p>
@@ -127,43 +128,27 @@
             <h2>Membership Plans</h2>
             <p>Flexible options designed for every fitness level and budget.</p>
         </div>
-        <div class="grid grid-3">
-            <div class="plan-card">
-                <div class="plan-badge">Starter</div>
-                <h3>Basic</h3>
-                <div class="plan-price">$29<span>/month</span></div>
-                <ul class="plan-features">
-                    <li><i class="fas fa-check"></i> 24/7 gym access</li>
-                    <li><i class="fas fa-check"></i> Cardio &amp; weights</li>
-                    <li><i class="fas fa-check"></i> Locker room access</li>
-                    <li><i class="fas fa-check"></i> Member app</li>
-                </ul>
-                <a href="login.html#register" class="btn btn-outline btn-full">Get Started</a>
+
+        <!-- Billing period toggle -->
+        <div style="display:flex;justify-content:center;margin-bottom:36px;">
+            <div class="ms-billing" role="tablist" aria-label="Billing period">
+                <button class="ms-billing-btn active" data-period="monthly" role="tab" aria-selected="true">Monthly</button>
+                <button class="ms-billing-btn" data-period="yearly" role="tab" aria-selected="false">
+                    Yearly <span class="ms-save-badge">Save 2 months</span>
+                </button>
             </div>
-            <div class="plan-card plan-featured">
-                <div class="plan-badge">Popular</div>
-                <h3>Premium</h3>
-                <div class="plan-price">$49<span>/month</span></div>
-                <ul class="plan-features">
-                    <li><i class="fas fa-check"></i> Everything in Basic</li>
-                    <li><i class="fas fa-check"></i> Group classes</li>
-                    <li><i class="fas fa-check"></i> Sauna &amp; steam room</li>
-                    <li><i class="fas fa-check"></i> Guest passes (2/mo)</li>
-                </ul>
-                <a href="login.html#register" class="btn btn-full">Get Started</a>
-            </div>
-            <div class="plan-card">
-                <div class="plan-badge">Elite</div>
-                <h3>VIP</h3>
-                <div class="plan-price">$99<span>/month</span></div>
-                <ul class="plan-features">
-                    <li><i class="fas fa-check"></i> Everything in Premium</li>
-                    <li><i class="fas fa-check"></i> Personal trainer</li>
-                    <li><i class="fas fa-check"></i> Nutrition plan</li>
-                    <li><i class="fas fa-check"></i> Priority booking</li>
-                </ul>
-                <a href="login.html#register" class="btn btn-outline btn-full">Get Started</a>
-            </div>
+        </div>
+
+        <!-- Plan cards rendered by js/index-plans.js -->
+        <div class="ms-grid" id="plansGrid"></div>
+
+        <p class="ms-note">
+            <i class="fas fa-shield-halved"></i>
+            Cancel any time. Prices in GBP (£). Tax calculated at checkout.
+        </p>
+
+        <div style="text-align:center;margin-top:24px;">
+            <a href="membership.html" class="btn btn-outline"><i class="fas fa-table-list"></i> Compare All Plans</a>
         </div>
     </div>
 </section>
@@ -245,7 +230,7 @@
                         <div><strong>200+</strong><small>Clients</small></div>
                         <div><strong>500+</strong><small>Sessions</small></div>
                     </div>
-                    <a href="#contact" class="btn btn-full btn-sm">
+                    <a href="login.html?from=book" class="btn btn-full btn-sm">
                         <i class="fas fa-calendar-plus"></i> Book Session
                     </a>
                 </div>
@@ -278,7 +263,7 @@
                         <div><strong>150+</strong><small>Clients</small></div>
                         <div><strong>400+</strong><small>Sessions</small></div>
                     </div>
-                    <a href="#contact" class="btn btn-full btn-sm">
+                    <a href="login.html?from=book" class="btn btn-full btn-sm">
                         <i class="fas fa-calendar-plus"></i> Book Session
                     </a>
                 </div>
@@ -311,7 +296,7 @@
                         <div><strong>300+</strong><small>Clients</small></div>
                         <div><strong>800+</strong><small>Sessions</small></div>
                     </div>
-                    <a href="#contact" class="btn btn-full btn-sm">
+                    <a href="login.html?from=book" class="btn btn-full btn-sm">
                         <i class="fas fa-calendar-plus"></i> Book Session
                     </a>
                 </div>
@@ -329,7 +314,7 @@
         </div>
         <div class="grid grid-2">
             <div class="testimonial">
-                <img src="member1.jpg" alt="Mike Johnson">
+                <img src="images/mike-tyson.jpg" alt="Mike Johnson">
                 <div class="testimonial-content">
                     <p>"Lost 25 lbs in 3 months with personal training! Best decision I ever made."</p>
                     <h4>Mike Johnson</h4>
@@ -339,7 +324,7 @@
                 </div>
             </div>
             <div class="testimonial">
-                <img src="member2.jpg" alt="Sarah Wilson">
+                <img src="images/sarah.jpg" alt="Sarah Wilson">
                 <div class="testimonial-content">
                     <p>"Love the classes and supportive community. The trainers truly care. Highly recommend!"</p>
                     <h4>Sarah Wilson</h4>
@@ -388,26 +373,27 @@
             <p>Visit us or drop a message. We'd love to hear from you.</p>
         </div>
 <div class="contact-form-container">
-    <form class="contact-form" action="mailto:info@gymdd.com?subject=Contact%20from%20GymDD" method="post" enctype="text/plain">
+    <form class="contact-form" id="contactForm" novalidate>
         <div class="form-row">
             <div class="form-group">
                 <label><i class="fas fa-user"></i> Name</label>
-                <input type="text" name="name" placeholder="Your full name" required>
+                <input type="text" name="name" autocomplete="name" placeholder="Your full name" maxlength="200" required>
             </div>
             <div class="form-group">
                 <label><i class="fas fa-envelope"></i> Email</label>
-                <input type="email" name="email" placeholder="your@email.com" required>
+                <input type="email" name="email" autocomplete="email" placeholder="your@email.com" maxlength="254" required>
             </div>
         </div>
         <div class="form-group">
             <label><i class="fas fa-phone"></i> Phone</label>
-            <input type="tel" name="phone" placeholder="Your phone number">
+            <input type="tel" name="phone" autocomplete="tel" maxlength="60" placeholder="Your phone number (optional)">
         </div>
         <div class="form-group">
             <label><i class="fas fa-message"></i> Message</label>
-            <textarea name="message" rows="5" placeholder="Tell us how we can help you..." required></textarea>
+            <textarea name="message" rows="5" maxlength="5000" placeholder="Tell us how we can help you..." required></textarea>
         </div>
-        <button type="submit" class="btn btn-full" style="width:auto; margin-top:16px; padding-top: 12px;">
+        <div id="contactFormFeedback" class="contact-form-feedback" role="status" aria-live="polite"></div>
+        <button type="submit" class="btn btn-full" style="width:auto; margin-top:16px; padding-top: 12px;" id="contactFormSubmit">
             <i class="fas fa-paper-plane"></i> Send Message
         </button>
     </form>
@@ -424,7 +410,7 @@
         </div>
         <div class="footer-links">
             <a href="#home">Home</a>
-            <a href="#plans">Plans</a>
+            <a href="membership.html">Plans</a>
             <a href="#classes">Classes</a>
             <a href="#trainers">Trainers</a>
             <a href="#gallery">Gallery</a>
@@ -471,5 +457,9 @@
     });
 })();
 </script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+<script type="module" src="js/index-plans.js"></script>
+<script type="module" src="js/contact-form.js"></script>
 </body>
 </html>
