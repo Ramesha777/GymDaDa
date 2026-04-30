@@ -26,6 +26,9 @@ var allTrainersById = {};
 var allClassesCache = [];
 var allClassesById = {};
 
+var adminClassLogWeekOffset = 0;
+
+
 var memberDetailModalInstance = null;
 var trainerDetailModalInstance = null;
 var classDetailModalInstance = null;
@@ -160,13 +163,23 @@ if ($('btnLogout')) {
 var sidebarLinks = document.querySelectorAll('.sidebar-nav a[data-section]');
 var sections = document.querySelectorAll('.admin-section');
 var titles = {
+
     overview: '<i class="fas fa-chart-pie me-2 text-info"></i>Dashboard',
+
     members: '<i class="fas fa-users me-2"></i>All Members',
+
     trainers: '<i class="fas fa-chalkboard-teacher me-2"></i>Trainer Applications',
+
     trainerAvail: '<i class="fas fa-calendar-check me-2"></i>Trainer Schedules',
+
+    classTracking: '<i class="fas fa-clipboard-check me-2"></i>Weekly class log',
+
     classes: '<i class="fas fa-dumbbell me-2"></i>Classes',
+
     checkin: '<i class="fas fa-qrcode me-2"></i>Booking check-in',
+
     chat: '<i class="fas fa-comments me-2"></i>Chat'
+
 };
 
 sidebarLinks.forEach(function(link) {
@@ -190,6 +203,11 @@ function switchSection(name) {
     if ($('topbarTitle')) $('topbarTitle').innerHTML = titles[name] || name;
 
     if (name === 'trainerAvail') loadTrainerAvailability();
+    if (name === 'classTracking') {
+        populateAdminClassLogTrainerFilter();
+        loadAdminTrainerClassTracking();
+    }
+
     if (name === 'classes') loadClassesAdmin();
     if (name === 'chat') loadAdminChatTrainers();
 }
@@ -1574,3 +1592,285 @@ if ($('btnAdminScanStart')) {
 if ($('btnAdminScanStop')) {
     $('btnAdminScanStop').addEventListener('click', function() { stopAdminQrScanner(); });
 }
+
+/* ═══ Weekly trainer class log (Firestore: trainerClassCompletions) ═══ */
+function adminPad2(n) {
+    return (n < 10 ? '0' : '') + n;
+}
+
+function adminFormatYMD(d) {
+    return d.getFullYear() + '-' + adminPad2(d.getMonth() + 1) + '-' + adminPad2(d.getDate());
+}
+
+function adminParseISODateLocal(iso) {
+    var p = String(iso || '').split('-');
+    if (p.length !== 3) return null;
+    var y = parseInt(p[0], 10);
+    var m = parseInt(p[1], 10) - 1;
+    var day = parseInt(p[2], 10);
+    if (isNaN(y) || isNaN(m) || isNaN(day)) return null;
+    return new Date(y, m, day);
+}
+
+function adminStartOfWeekMonday(d) {
+    var x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    var day = x.getDay();
+    var diff = day === 0 ? -6 : 1 - day;
+    x.setDate(x.getDate() + diff);
+    return x;
+}
+
+function adminEndOfWeekSunday(monday) {
+    var d = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate());
+    d.setDate(d.getDate() + 6);
+    return d;
+}
+
+function adminScheduleDayToJsWeekday(dayStr) {
+    if (dayStr == null || dayStr === '') return null;
+    var k = String(dayStr).trim().toLowerCase().replace(/\./g, '');
+    var map = {
+        sun: 0, sunday: 0,
+        mon: 1, monday: 1,
+        tue: 2, tues: 2, tuesday: 2,
+        wed: 3, weds: 3, wednesday: 3,
+        thu: 4, thur: 4, thurs: 4, thursday: 4,
+        fri: 5, friday: 5,
+        sat: 6, saturday: 6
+    };
+    if (map[k] !== undefined) return map[k];
+    var short = k.slice(0, 3);
+    if (map[short] !== undefined) return map[short];
+    return null;
+}
+
+function adminSessionDateForClassInWeek(weekMonday, scheduleDayRaw) {
+    var wd = adminScheduleDayToJsWeekday(scheduleDayRaw);
+    if (wd === null) return null;
+    var i;
+    for (i = 0; i < 7; i++) {
+        var d = new Date(weekMonday.getFullYear(), weekMonday.getMonth(), weekMonday.getDate());
+        d.setDate(d.getDate() + i);
+        if (d.getDay() === wd) return adminFormatYMD(d);
+    }
+    return null;
+}
+
+function adminClassCompletionDocId(classId, sessionDate) {
+    return classId + '_' + sessionDate;
+}
+
+function adminPrettySessionDate(sessionDateIso) {
+    var d = adminParseISODateLocal(sessionDateIso);
+    return d ? d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }) : sessionDateIso;
+}
+
+function populateAdminClassLogTrainerFilter() {
+    var sel = $('adminClassLogTrainerFilter');
+    if (!sel) return;
+    var keep = sel.value || '';
+    fetchTrainersOrdered().then(function(rows) {
+        sel.innerHTML = '<option value="">All trainers</option>';
+        rows.forEach(function(doc) {
+            var d = doc.data();
+            if ((d.approvalStatus || '') !== 'approved') return;
+            var opt = document.createElement('option');
+            opt.value = doc.id;
+            opt.textContent = (d.displayName || d.email || doc.id).trim();
+            sel.appendChild(opt);
+        });
+        sel.value = keep;
+        if (sel.value !== keep) sel.value = '';
+    });
+}
+
+function adminEffectiveSessionStatus(d) {
+    if (!d || typeof d !== 'object') return 'pending';
+    var st = String(d.sessionStatus || '').trim().toLowerCase();
+    if (st === 'completed' || st === 'cancelled' || st === 'delayed' || st === 'missed') return st;
+    if (d.completedAt) return 'completed';
+    return 'pending';
+}
+
+function adminSessionStatusBadgeHtml(st) {
+    switch (st) {
+        case 'completed':
+            return '<span class="badge bg-success">Completed</span>';
+        case 'missed':
+            return '<span class="badge bg-danger">Missed</span>';
+        case 'cancelled':
+            return '<span class="badge bg-secondary">Cancel</span>';
+        case 'delayed':
+            return '<span class="badge bg-warning text-dark">Delay</span>';
+        default:
+            return '<span class="badge bg-secondary text-dark">Pending</span>';
+    }
+}
+
+function adminTimestampSeconds(ts) {
+    if (!ts) return 0;
+    if (typeof ts.seconds === 'number') return ts.seconds;
+    if (typeof ts.toMillis === 'function') return Math.floor(ts.toMillis() / 1000);
+    return 0;
+}
+
+function adminFormatCompletedTime(ts) {
+    var sec = adminTimestampSeconds(ts);
+    if (!sec) return '—';
+    var d = new Date(sec * 1000);
+    return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+function appendAdminClassLogRow(tbody, trainerName, className, sessionDateIso, scheduleTimeStr, comp, orphanTip) {
+    var st = adminEffectiveSessionStatus(comp);
+    var noteRaw = comp && comp.notes ? String(comp.notes).trim() : '';
+    var noteDisplay = orphanTip
+        ? (noteRaw ? escHtml(noteRaw) + ' ' : '') + '<small class="text-muted">' + escHtml(orphanTip) + '</small>'
+        : noteRaw
+          ? escHtml(noteRaw.length > 120 ? noteRaw.slice(0, 117) + '…' : noteRaw)
+          : '—';
+
+    var completedCell = '—';
+    if (st === 'completed' && comp && comp.completedAt) {
+        completedCell = escHtml(adminFormatCompletedTime(comp.completedAt));
+    }
+
+    var dayCell = escHtml(adminPrettySessionDate(sessionDateIso));
+    if (scheduleTimeStr && String(scheduleTimeStr).trim()) {
+        dayCell += '<br><small class="text-muted">' + escHtml(String(scheduleTimeStr).trim()) + '</small>';
+    }
+
+    var classCell = escHtml(className || '—');
+
+    var tr = document.createElement('tr');
+    tr.innerHTML =
+        '<td>' + escHtml(trainerName) + '</td>' +
+        '<td>' + classCell + '</td>' +
+        '<td>' + dayCell + '</td>' +
+        '<td>' + adminSessionStatusBadgeHtml(st) + '</td>' +
+        '<td class="small text-muted font-monospace">' + completedCell + '</td>' +
+        '<td class="small">' + noteDisplay + '</td>';
+    tbody.appendChild(tr);
+}
+
+function loadAdminTrainerClassTracking() {
+    var tbody = $('adminClassTrackingBody');
+    var lbl = $('adminClassLogWeekLabel');
+    var selFilter = $('adminClassLogTrainerFilter');
+    var filterTid = selFilter ? (selFilter.value || '').trim() : '';
+    if (!tbody) return;
+
+    var base = new Date();
+    var mon = adminStartOfWeekMonday(base);
+    mon.setDate(mon.getDate() + adminClassLogWeekOffset * 7);
+    var sun = adminEndOfWeekSunday(mon);
+    var w0 = adminFormatYMD(mon);
+    var w1 = adminFormatYMD(sun);
+
+    if (lbl) {
+        lbl.textContent =
+            mon.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) +
+            ' – ' +
+            sun.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    }
+
+    tbody.innerHTML =
+        '<tr><td colspan="6" class="text-center text-muted py-4">Loading weekly log…</td></tr>';
+
+    Promise.all([
+        db.collection('classes').get(),
+        db.collection('trainerClassCompletions')
+            .where('sessionDate', '>=', w0)
+            .where('sessionDate', '<=', w1)
+            .get()
+    ])
+        .then(function(parts) {
+            var snapClasses = parts[0];
+            var snapComp = parts[1];
+            var compById = {};
+            snapComp.forEach(function(doc) {
+                compById[doc.id] = doc.data();
+            });
+            var usedComp = {};
+
+            tbody.innerHTML = '';
+
+            snapClasses.forEach(function(doc) {
+                var c = doc.data();
+                if ((c.status || 'active') !== 'active') return;
+                var tid = (c.trainerId || '').trim();
+                if (!tid) return;
+                if (filterTid && tid !== filterTid) return;
+                var sessionDate = adminSessionDateForClassInWeek(mon, (c.schedule || {}).day);
+                if (!sessionDate) return;
+                var did = adminClassCompletionDocId(doc.id, sessionDate);
+                usedComp[did] = true;
+                var comp = compById[did];
+                var tnm = ((c.trainerName || '').trim() || '(set trainer name on class)');
+                appendAdminClassLogRow(
+                    tbody,
+                    tnm,
+                    (c.name || '').trim(),
+                    sessionDate,
+                    (c.schedule || {}).time || '',
+                    comp || null,
+                    ''
+                );
+            });
+
+            snapComp.forEach(function(doc) {
+                if (usedComp[doc.id]) return;
+                var d = doc.data();
+                var tid = (d.trainerId || '').trim();
+                if (filterTid && tid !== filterTid) return;
+                appendAdminClassLogRow(
+                    tbody,
+                    (d.trainerName || '').trim() || '(trainer)',
+                    d.className || d.classId || '—',
+                    d.sessionDate,
+                    d.time || '—',
+                    d,
+                    'outside current class template'
+                );
+            });
+
+            if (!tbody.querySelector('tr')) {
+                tbody.innerHTML =
+                    '<tr><td colspan="6" class="text-muted text-center py-4">No sessions this week.</td></tr>';
+            }
+        })
+        .catch(function(err) {
+            console.error(err);
+            tbody.innerHTML =
+                '<tr><td colspan="6" class="text-danger text-center py-4">Could not load class log.</td></tr>';
+        });
+}
+
+function bindAdminClassLogControls() {
+    if ($('btnAdminClassLogPrev')) {
+        $('btnAdminClassLogPrev').addEventListener('click', function() {
+            adminClassLogWeekOffset--;
+            loadAdminTrainerClassTracking();
+        });
+    }
+    if ($('btnAdminClassLogNext')) {
+        $('btnAdminClassLogNext').addEventListener('click', function() {
+            adminClassLogWeekOffset++;
+            loadAdminTrainerClassTracking();
+        });
+    }
+    if ($('btnAdminClassLogToday')) {
+        $('btnAdminClassLogToday').addEventListener('click', function() {
+            adminClassLogWeekOffset = 0;
+            loadAdminTrainerClassTracking();
+        });
+    }
+    if ($('btnRefreshClassTracking')) {
+        $('btnRefreshClassTracking').addEventListener('click', loadAdminTrainerClassTracking);
+    }
+    if ($('adminClassLogTrainerFilter')) {
+        $('adminClassLogTrainerFilter').addEventListener('change', loadAdminTrainerClassTracking);
+    }
+}
+
+bindAdminClassLogControls();

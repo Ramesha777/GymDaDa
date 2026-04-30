@@ -17,6 +17,9 @@ var trainerData = {};
 var chatMsgUnsub = null;
 var trainerClassRequestByClassId = {};
 var trainerHtml5QrCode = null;
+var trainerClassTrackWeekOffset = 0;
+var trainerSessionLogModalInst = null;
+var trainerSessionLogContext = null;
 
 function escHtml(s) {
     if (s == null || s === '') return '';
@@ -103,6 +106,7 @@ function switchSection(name) {
 
     if (name === 'members') loadMyMembers();
     if (name === 'classes') loadTrainerClasses();
+    if (name === 'schedule') loadTrainerOverviewStats();
     if (name === 'availability') loadAvailability();
     if (name === 'chat') openTrainerAdminChat();
 }
@@ -454,6 +458,111 @@ if ($('btnRefreshAvail')) {
 }
 
 /* ─── My classes (assigned by admin + requests for open slots) ─── */
+function pad2(n) {
+    return (n < 10 ? '0' : '') + n;
+}
+
+function formatYYYYMMDDLocal(d) {
+    return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+}
+
+function parseISODateLocal(iso) {
+    var p = String(iso || '').split('-');
+    if (p.length !== 3) return null;
+    var y = parseInt(p[0], 10);
+    var m = parseInt(p[1], 10) - 1;
+    var day = parseInt(p[2], 10);
+    if (isNaN(y) || isNaN(m) || isNaN(day)) return null;
+    return new Date(y, m, day);
+}
+
+/** Map class schedule.day to JS weekday (0–6, Sun–Sat). */
+function scheduleDayToJsWeekdayTrainer(dayStr) {
+    if (dayStr == null || dayStr === '') return null;
+    var k = String(dayStr).trim().toLowerCase().replace(/\./g, '');
+    var map = {
+        sun: 0, sunday: 0,
+        mon: 1, monday: 1,
+        tue: 2, tues: 2, tuesday: 2,
+        wed: 3, weds: 3, wednesday: 3,
+        thu: 4, thur: 4, thurs: 4, thursday: 4,
+        fri: 5, friday: 5,
+        sat: 6, saturday: 6
+    };
+    if (map[k] !== undefined) return map[k];
+    var short = k.slice(0, 3);
+    if (map[short] !== undefined) return map[short];
+    return null;
+}
+
+function trainerStartOfWeekMonday(d) {
+    var x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    var day = x.getDay();
+    var diff = day === 0 ? -6 : 1 - day;
+    x.setDate(x.getDate() + diff);
+    return x;
+}
+
+function trainerEndOfWeekSunday(monday) {
+    var d = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate());
+    d.setDate(d.getDate() + 6);
+    return d;
+}
+
+function sessionDateForClassInWeek(weekMonday, scheduleDayRaw) {
+    var wd = scheduleDayToJsWeekdayTrainer(scheduleDayRaw);
+    if (wd === null) return null;
+    var i;
+    for (i = 0; i < 7; i++) {
+        var d = new Date(weekMonday.getFullYear(), weekMonday.getMonth(), weekMonday.getDate());
+        d.setDate(d.getDate() + i);
+        if (d.getDay() === wd) return formatYYYYMMDDLocal(d);
+    }
+    return null;
+}
+
+function trainerClassCompletionDocId(classId, sessionDate) {
+    return classId + '_' + sessionDate;
+}
+
+function formatWeekDayDateLabel(sessionDateIso) {
+    var d = parseISODateLocal(sessionDateIso);
+    return d ? d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }) : sessionDateIso;
+}
+
+function trainerEffectiveSessionStatus(comp) {
+    if (!comp) return 'pending';
+    var st = String(comp.sessionStatus || '').trim().toLowerCase();
+    if (st === 'completed' || st === 'cancelled' || st === 'delayed' || st === 'missed') return st;
+    if (comp.completedAt) return 'completed';
+    return 'pending';
+}
+
+function trainerSessionStatusBadgeHtml(st) {
+    switch (st) {
+        case 'completed':
+            return '<span class="badge bg-success">Completed</span>';
+        case 'missed':
+            return '<span class="badge bg-danger">Missed</span>';
+        case 'cancelled':
+            return '<span class="badge bg-secondary">Cancel</span>';
+        case 'delayed':
+            return '<span class="badge bg-warning text-dark">Delay</span>';
+        default:
+            return '<span class="badge bg-secondary text-dark">Pending</span>';
+    }
+}
+
+function formatCompletedSessionTime(ts) {
+    var sec = 0;
+    if (!ts) return '—';
+    if (typeof ts.seconds === 'number') sec = ts.seconds;
+    else if (typeof ts.toMillis === 'function') sec = Math.floor(ts.toMillis() / 1000);
+    if (!sec) return '—';
+    var d = new Date(sec * 1000);
+    return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
 function trainerClassRequestDocId(classId) {
     return classId + '_' + currentUid;
 }
@@ -477,16 +586,520 @@ function showClassAssignAlert(msg, type) {
     setTimeout(function() { el.classList.add('d-none'); }, 5000);
 }
 
-function loadTrainerOverviewStats() {
-    var statEl = $('statClasses');
-    if (!statEl) return;
-    db.collection('classes').where('trainerId', '==', currentUid).get()
-        .then(function(snap) {
-            statEl.textContent = snap.size;
+function loadTrainerWeeklyCompletionCountStat(mon0, sun0) {
+    var mon = mon0 || trainerStartOfWeekMonday(new Date());
+    var sun = sun0 || trainerEndOfWeekSunday(mon);
+    if (!currentUid) return Promise.resolve();
+
+    return db.collection('classes')
+        .get()
+        .then(function(snapClasses) {
+            var slots = [];
+            snapClasses.forEach(function(doc) {
+                var c = doc.data();
+                if ((c.status || 'active') !== 'active') return;
+                if ((c.trainerId || '').trim() !== currentUid) return;
+                var sessionDate = sessionDateForClassInWeek(mon, (c.schedule || {}).day);
+                if (!sessionDate) return;
+                slots.push(trainerClassCompletionDocId(doc.id, sessionDate));
+            });
+            if (!slots.length) {
+                var emptyEl = $('statCompleted');
+                if (emptyEl) emptyEl.textContent = '0';
+                return;
+            }
+            return Promise.all(
+                slots.map(function(cid) {
+                    return db.collection('trainerClassCompletions').doc(cid).get();
+                })
+            ).then(function(docSnaps) {
+                var n = 0;
+                docSnaps.forEach(function(d) {
+                    if (!d.exists) return;
+                    if (trainerEffectiveSessionStatus(d.data()) === 'completed') n++;
+                });
+                var el = $('statCompleted');
+                if (el) el.textContent = String(n);
+            });
         })
         .catch(function() {
-            statEl.textContent = '0';
+            var el = $('statCompleted');
+            if (el) el.textContent = '0';
         });
+}
+
+function renderTrainerBookingTableRows(tbody, rows, layout, emptyMsg) {
+    tbody.innerHTML = '';
+    var cols = layout === 'schedule' ? 6 : 5;
+
+    function emptyHtml(msg) {
+
+
+        tbody.innerHTML =
+
+
+            '<tr><td colspan="' + cols + '" class="text-center text-muted py-3">' +
+
+
+                escHtml(msg || 'No rows.') + '</td></tr>';
+
+
+    }
+
+    if (!rows.length) {
+        emptyHtml(emptyMsg);
+        return;
+    }
+
+    rows.forEach(function(r) {
+
+        var tr = document.createElement('tr');
+
+
+        function td(txt) {
+
+
+            var c = document.createElement('td');
+
+            c.textContent = txt;
+
+            return c;
+
+        }
+
+
+        var mem = parseISODateLocal(r.date);
+
+        var dateLabel = mem
+            ? mem.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+
+            : (r.date || '—');
+
+
+        var status = r.status || 'confirmed';
+
+        if (layout === 'schedule') {
+
+
+            tr.appendChild(td(dateLabel));
+
+
+            tr.appendChild(td(r.time || '—'));
+
+
+            tr.appendChild(td(r.cls || '—'));
+
+
+            tr.appendChild(td(r.member || '—'));
+
+
+            tr.appendChild(td(status));
+
+
+            var act = document.createElement('td');
+
+            act.className = 'text-muted small';
+
+
+            act.textContent = '—';
+
+
+            tr.appendChild(act);
+
+
+        } else {
+
+
+            tr.appendChild(td(r.member || '—'));
+
+            tr.appendChild(td(r.cls || '—'));
+
+            tr.appendChild(td(dateLabel));
+
+
+            tr.appendChild(td(r.time || '—'));
+
+
+            tr.appendChild(td(status));
+
+
+        }
+
+        tbody.appendChild(tr);
+
+
+    });
+
+
+}
+
+function loadTrainerOverviewStats() {
+    if (!currentUid) return Promise.resolve();
+
+    db.collection('classes')
+        .where('trainerId', '==', currentUid)
+        .get()
+        .then(function(snap) {
+            if ($('statClasses')) $('statClasses').textContent = snap.size;
+        })
+        .catch(function() {
+            if ($('statClasses')) $('statClasses').textContent = '0';
+        });
+
+    db.collection('bookings')
+        .where('trainerId', '==', currentUid)
+        .get()
+        .then(function(snap) {
+            var members = {};
+            var today = formatYYYYMMDDLocal(new Date());
+            var upcoming = 0;
+            var rows = [];
+
+            snap.forEach(function(doc) {
+                var b = doc.data();
+                var st = (b.status || '').trim();
+                if (st === 'cancelled') return;
+                if (b.memberId) members[b.memberId] = true;
+                rows.push({
+                    member: (b.memberName || b.memberEmail || '').trim(),
+                    cls: (b.className || '').trim(),
+                    date: b.date || '',
+                    time: b.time || '',
+                    status: st || 'confirmed'
+                });
+                if (b.date && String(b.date) >= today) upcoming++;
+            });
+
+            if ($('statMembers')) $('statMembers').textContent = String(Object.keys(members).length);
+            if ($('statUpcoming')) $('statUpcoming').textContent = String(upcoming);
+
+            rows.sort(function(a, b) {
+                var ad = String(a.date);
+                var bd = String(b.date);
+                if (ad !== bd) return ad < bd ? -1 : ad > bd ? 1 : 0;
+                return String(a.time || '').localeCompare(String(b.time || ''));
+            });
+
+            var ob = $('overviewScheduleBody');
+            var upcomingSlice = rows.filter(function(r) {
+                return r.date && String(r.date) >= today;
+            }).slice(0, 25);
+            if (ob) {
+                renderTrainerBookingTableRows(ob, upcomingSlice, 'overview', 'No upcoming bookings.');
+            }
+
+            var sb = $('scheduleBody');
+            if (sb) {
+                renderTrainerBookingTableRows(sb, rows, 'schedule', 'No bookings for your classes yet.');
+            }
+        })
+        .catch(function() {
+            if ($('statMembers')) $('statMembers').textContent = '0';
+            if ($('statUpcoming')) $('statUpcoming').textContent = '0';
+            var ob = $('overviewScheduleBody');
+            var sb = $('scheduleBody');
+            if (ob) ob.innerHTML = '<tr><td colspan="5" class="text-center text-danger small py-3">Could not load bookings.</td></tr>';
+            if (sb) sb.innerHTML = '<tr><td colspan="6" class="text-center text-danger small py-3">Could not load bookings.</td></tr>';
+        });
+
+    return loadTrainerWeeklyCompletionCountStat();
+}
+
+function loadTrainerWeekSessions() {
+    var tbody = $('trainerWeekSessionsBody');
+    var lbl = $('trainerWeekRangeLabel');
+    if (!tbody || !currentUid) return;
+
+    var base = new Date();
+    var mon = trainerStartOfWeekMonday(base);
+    mon.setDate(mon.getDate() + trainerClassTrackWeekOffset * 7);
+    var sun = trainerEndOfWeekSunday(mon);
+    var w0 = formatYYYYMMDDLocal(mon);
+    var w1 = formatYYYYMMDDLocal(sun);
+
+    if (lbl) {
+        lbl.textContent =
+            mon.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) +
+            ' – ' +
+            sun.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    }
+
+    tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-3">Loading…</td></tr>';
+
+    db.collection('classes')
+        .get()
+        .then(function(snapClasses) {
+            var assigned = [];
+            snapClasses.forEach(function(doc) {
+                var c = doc.data();
+                if ((c.status || 'active') !== 'active') return;
+                if ((c.trainerId || '').trim() !== currentUid) return;
+                var dayRaw = (c.schedule || {}).day;
+                var sessionDate = sessionDateForClassInWeek(mon, dayRaw);
+                if (!sessionDate) return;
+                if (sessionDate < w0 || sessionDate > w1) return;
+                assigned.push({
+                    classId: doc.id,
+                    sessionDate: sessionDate,
+                    className: c.name || '',
+                    scheduleDay: dayRaw || '',
+                    time: (c.schedule || {}).time || '',
+                    completion: null
+                });
+            });
+
+            assigned.sort(function(a, b) {
+                if (a.sessionDate !== b.sessionDate) return a.sessionDate < b.sessionDate ? -1 : 1;
+                return String(a.time || '').localeCompare(String(b.time || ''));
+            });
+
+            tbody.innerHTML = '';
+            if (!assigned.length) {
+                tbody.innerHTML =
+                    '<tr><td colspan="7" class="text-muted text-center py-4">No recurring sessions this week — check classes have a weekday in admin, or browse another week.</td></tr>';
+                return Promise.resolve();
+            }
+
+            return Promise.all(
+                assigned.map(function(row) {
+                    return db.collection('trainerClassCompletions')
+                        .doc(trainerClassCompletionDocId(row.classId, row.sessionDate))
+                        .get();
+                })
+            ).then(function(docSnaps) {
+                docSnaps.forEach(function(docSnap, i) {
+                    if (docSnap.exists) assigned[i].completion = docSnap.data();
+                });
+
+                assigned.forEach(function(row) {
+                var eff = trainerEffectiveSessionStatus(row.completion);
+                var tr = document.createElement('tr');
+                var tdD = document.createElement('td');
+                tdD.textContent = formatWeekDayDateLabel(row.sessionDate);
+                var tdT = document.createElement('td');
+                tdT.textContent = row.time || '—';
+                var tdN = document.createElement('td');
+                tdN.textContent = row.className || '—';
+                var tdS = document.createElement('td');
+                tdS.innerHTML = trainerSessionStatusBadgeHtml(eff);
+
+                var tdCt = document.createElement('td');
+                tdCt.className = 'small text-muted font-monospace';
+                if (eff === 'completed' && row.completion && row.completion.completedAt) {
+                    tdCt.textContent = formatCompletedSessionTime(row.completion.completedAt);
+                } else {
+                    tdCt.textContent = '—';
+                }
+
+                var tdNotes = document.createElement('td');
+                tdNotes.className = 'small';
+                var noteTxt = (row.completion && row.completion.notes) ? String(row.completion.notes).trim() : '';
+                if (noteTxt.length > 80) {
+                    tdNotes.textContent = noteTxt.slice(0, 77) + '…';
+                    tdNotes.title = noteTxt;
+                } else {
+                    tdNotes.textContent = noteTxt || '—';
+                    if (noteTxt) tdNotes.title = noteTxt;
+                }
+
+                var tdA = document.createElement('td');
+                var b = document.createElement('button');
+                b.type = 'button';
+                b.className = 'btn btn-sm btn-outline-info trainer-session-log-btn';
+                b.setAttribute('data-class-id', row.classId);
+                b.setAttribute('data-session-date', row.sessionDate);
+                b.setAttribute('data-class-name', row.className || '');
+                b.setAttribute('data-day', row.scheduleDay);
+                b.setAttribute('data-time', row.time || '');
+                b.innerHTML = eff === 'pending' ? '<i class="fas fa-edit me-1"></i>Log' : '<i class="fas fa-edit me-1"></i>Edit';
+                tdA.appendChild(b);
+
+                tr.appendChild(tdD);
+                tr.appendChild(tdT);
+                tr.appendChild(tdN);
+                tr.appendChild(tdS);
+                tr.appendChild(tdCt);
+                tr.appendChild(tdNotes);
+                tr.appendChild(tdA);
+                tbody.appendChild(tr);
+            });
+            });
+        })
+        .catch(function(err) {
+            console.error(err);
+            tbody.innerHTML =
+                '<tr><td colspan="7" class="text-danger text-center py-3">Could not load sessions (network or Firestore rules).</td></tr>';
+        });
+}
+
+function getTrainerResolvedName() {
+    var tname = '';
+    if (trainerData && trainerData.displayName) tname = String(trainerData.displayName).trim();
+    if (!tname && currentUser && currentUser.email) tname = currentUser.email;
+    if (!tname) tname = 'Trainer';
+    return tname;
+}
+
+function trainerValidateWeekSessionClass(classId, sessionDate) {
+    return db.collection('classes').doc(classId).get().then(function(cdoc) {
+        if (!cdoc.exists) throw new Error('Class not found.');
+        var c = cdoc.data();
+        var tid = (c.trainerId || '').trim();
+        if (tid !== currentUid) throw new Error('You are no longer assigned to this class.');
+        var monSel = trainerStartOfWeekMonday(new Date());
+        monSel.setDate(monSel.getDate() + trainerClassTrackWeekOffset * 7);
+        var expect = sessionDateForClassInWeek(monSel, (c.schedule || {}).day);
+        if (!expect || expect !== sessionDate) {
+            throw new Error('Session does not match this class weekday for the week you\'re viewing.');
+        }
+        return c;
+    });
+}
+
+/** Persists trainer session status + optional notes for the weekly template row (admin visibility). */
+function saveTrainerSessionLog(classId, sessionDate, className, scheduleDay, timeSlot, sessionStatus, notesRaw) {
+    if (!currentUid || !classId || !sessionDate) {
+        return Promise.reject(new Error('Missing session.'));
+    }
+    if (!sessionStatus) {
+        return Promise.reject(new Error('Choose a status.'));
+    }
+    var notes = (notesRaw || '').trim();
+    var Fdel = firebase.firestore.FieldValue;
+
+    return trainerValidateWeekSessionClass(classId, sessionDate).then(function(c) {
+        var payload = {
+            classId: classId,
+            sessionDate: sessionDate,
+            className: className || c.name || '',
+            scheduleDay: scheduleDay || (c.schedule || {}).day || '',
+            time: timeSlot || (c.schedule || {}).time || '',
+            trainerId: currentUid,
+            trainerName: getTrainerResolvedName(),
+            sessionStatus: sessionStatus,
+            updatedAt: Fdel.serverTimestamp()
+        };
+        if (notes) {
+            payload.notes = notes;
+        } else {
+            payload.notes = Fdel.delete();
+        }
+        if (sessionStatus === 'completed') {
+            payload.completedAt = Fdel.serverTimestamp();
+        } else {
+            payload.completedAt = Fdel.delete();
+        }
+        return db.collection('trainerClassCompletions').doc(trainerClassCompletionDocId(classId, sessionDate)).set(payload, { merge: true });
+    }).then(function() {
+        showClassAssignAlert('Session log saved for admin.', 'success');
+        loadTrainerWeekSessions();
+        loadTrainerOverviewStats();
+    });
+}
+
+function unmarkTrainerWeekSession(classId, sessionDate) {
+    var ref = db.collection('trainerClassCompletions').doc(trainerClassCompletionDocId(classId, sessionDate));
+
+    return ref.get()
+        .then(function(doc) {
+            if (!doc.exists) return false;
+            var d = doc.data();
+            if ((d.trainerId || '').trim() !== currentUid) {
+                showClassAssignAlert('You can only clear your own entries.', 'warning');
+                return false;
+            }
+            return ref.delete().then(function() {
+                return true;
+            });
+        })
+        .then(function(ok) {
+            if (!ok) return false;
+            showClassAssignAlert('Session log cleared.', 'secondary');
+            loadTrainerWeekSessions();
+            loadTrainerOverviewStats();
+            return true;
+        })
+        .catch(function(err) {
+            showClassAssignAlert(err.message || 'Could not remove.', 'danger');
+            return false;
+        });
+}
+
+function getTrainerSessionLogModal() {
+    if (trainerSessionLogModalInst) return trainerSessionLogModalInst;
+    var el = $('trainerSessionLogModal');
+    if (!el || typeof bootstrap === 'undefined') return null;
+    trainerSessionLogModalInst = new bootstrap.Modal(el);
+    return trainerSessionLogModalInst;
+}
+
+function openTrainerSessionLogModalFromRow(row) {
+    trainerSessionLogContext = row;
+    var sub = $('trainerSessionLogModalSubtitle');
+    var stSel = $('trainerSessionLogStatus');
+    var notesEl = $('trainerSessionLogNotes');
+    if (!sub || !stSel || !notesEl) return;
+
+    sub.textContent =
+        (row.className || 'Class') +
+        ' · ' +
+        formatWeekDayDateLabel(row.sessionDate) +
+        (row.time ? ' · ' + row.time : '');
+
+    var eff = trainerEffectiveSessionStatus(row.completion);
+    stSel.value = eff === 'pending' ? 'completed' : eff;
+
+    notesEl.value = row.completion && row.completion.notes ? String(row.completion.notes) : '';
+
+    var m = getTrainerSessionLogModal();
+    if (m) m.show();
+}
+
+function bindTrainerSessionLogModal() {
+    var btnSave = $('trainerSessionLogSave');
+    var btnClear = $('trainerSessionLogClear');
+    if (btnSave) {
+        btnSave.addEventListener('click', function() {
+            var ctx = trainerSessionLogContext;
+            if (!ctx) return;
+            var stEl = $('trainerSessionLogStatus');
+            var notesEl = $('trainerSessionLogNotes');
+            var st = (stEl && stEl.value) || 'completed';
+            var notes = notesEl ? notesEl.value : '';
+            saveTrainerSessionLog(
+                ctx.classId,
+                ctx.sessionDate,
+                ctx.className,
+                ctx.scheduleDay,
+                ctx.time,
+                st,
+                notes
+            )
+                .then(function() {
+                    var modal = getTrainerSessionLogModal();
+                    if (modal) modal.hide();
+                })
+                .catch(function(err) {
+                    showClassAssignAlert(err.message || 'Could not save.', 'danger');
+                });
+        });
+    }
+    if (btnClear) {
+        btnClear.addEventListener('click', function() {
+            var ctx = trainerSessionLogContext;
+            if (!ctx || !ctx.completion) {
+                var m0 = getTrainerSessionLogModal();
+                if (m0) m0.hide();
+                return;
+            }
+            if (!confirm('Remove this session log? The admin will see this slot as Pending.')) return;
+            unmarkTrainerWeekSession(ctx.classId, ctx.sessionDate).then(function(ok) {
+                if (!ok) return;
+                var modal = getTrainerSessionLogModal();
+                if (modal) modal.hide();
+            });
+        });
+    }
 }
 
 function loadTrainerClassRequestsMap() {
@@ -729,6 +1342,7 @@ function loadTrainerClasses() {
         }
 
         loadMemberClassRequestsForTrainer();
+        loadTrainerWeekSessions();
         loadTrainerOverviewStats();
     }).catch(function(err) {
         console.error(err);
@@ -785,11 +1399,113 @@ function submitTrainerClassRequest(classId) {
 var secClassesEl = $('sec-classes');
 if (secClassesEl) {
     secClassesEl.addEventListener('click', function(e) {
+        var mLog = e.target.closest('.trainer-session-log-btn');
+
+        if (mLog && mLog.getAttribute('data-class-id') && mLog.getAttribute('data-session-date')) {
+            var cid = mLog.getAttribute('data-class-id');
+            var sdt = mLog.getAttribute('data-session-date');
+            var row = {
+                classId: cid,
+                sessionDate: sdt,
+                className: mLog.getAttribute('data-class-name') || '',
+                scheduleDay: mLog.getAttribute('data-day') || '',
+                time: mLog.getAttribute('data-time') || '',
+                completion: null
+            };
+            db.collection('trainerClassCompletions')
+                .doc(trainerClassCompletionDocId(cid, sdt))
+                .get()
+                .then(function(doc) {
+                    if (doc.exists) row.completion = doc.data();
+                    openTrainerSessionLogModalFromRow(row);
+                })
+                .catch(function(err) {
+                    console.error(err);
+                    showClassAssignAlert('Could not open session log.', 'danger');
+                });
+
+            return;
+        }
+
         var btn = e.target.closest('.request-class-btn');
+
         if (!btn || !btn.getAttribute('data-class-id')) return;
+
         submitTrainerClassRequest(btn.getAttribute('data-class-id'));
+
     });
 }
+
+function bindTrainerWeekNav() {
+
+    function goto(offset) {
+
+
+        trainerClassTrackWeekOffset = offset;
+
+        loadTrainerWeekSessions();
+
+
+    }
+
+    if ($('btnTrainerWeekPrev')) {
+
+
+        $('btnTrainerWeekPrev').addEventListener('click', function() {
+
+
+            goto(trainerClassTrackWeekOffset - 1);
+
+
+        });
+
+    }
+
+
+    if ($('btnTrainerWeekNext')) {
+
+
+        $('btnTrainerWeekNext').addEventListener('click', function() {
+
+
+            goto(trainerClassTrackWeekOffset + 1);
+
+
+        });
+
+    }
+
+
+    if ($('btnTrainerWeekToday')) {
+
+
+        $('btnTrainerWeekToday').addEventListener('click', function() {
+
+
+            trainerClassTrackWeekOffset = 0;
+
+            loadTrainerWeekSessions();
+
+
+        });
+
+    }
+
+
+    if ($('btnRefreshWeekSessions')) {
+
+
+        $('btnRefreshWeekSessions').addEventListener('click', loadTrainerWeekSessions);
+
+
+    }
+
+
+}
+
+bindTrainerWeekNav();
+
+bindTrainerSessionLogModal();
 
 if ($('btnRefreshClasses')) {
     $('btnRefreshClasses').addEventListener('click', loadTrainerClasses);
@@ -797,6 +1513,9 @@ if ($('btnRefreshClasses')) {
 
 if ($('btnRefreshOverview')) {
     $('btnRefreshOverview').addEventListener('click', loadTrainerOverviewStats);
+}
+if ($('btnRefreshSchedule')) {
+    $('btnRefreshSchedule').addEventListener('click', loadTrainerOverviewStats);
 }
 
 /* ─── Members (from bookings) ─── */

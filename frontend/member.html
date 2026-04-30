@@ -37,6 +37,7 @@
         <a href="#" data-section="bookings"><i class="fas fa-calendar-check"></i> My Bookings</a>
         <div class="nav-divider"></div>
         <div class="nav-label">Quick Links</div>
+        <a href="membership.html"><i class="fas fa-id-card"></i> Membership plans</a>
         <a href="index.html"><i class="fas fa-globe"></i> View Website</a>
     </nav>
     <div class="sidebar-footer">
@@ -231,6 +232,23 @@
             <div class="modal-footer">
                 <button type="button" class="btn btn-outline-light btn-sm" data-bs-dismiss="modal">Cancel</button>
                 <button type="button" class="btn btn-primary btn-sm" id="btnConfirmBook">Confirm Booking</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Membership / booking gate (no active plan or guest trial exhausted) -->
+<div class="modal fade" id="bookingGateModal" tabindex="-1" aria-labelledby="bookingGateModalTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-secondary" style="background: var(--card-bg, #1a1d23); color: #fff;">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title" id="bookingGateModalTitle">—</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body" id="bookingGateModalBody"></div>
+            <div class="modal-footer border-secondary flex-wrap gap-2 justify-content-end">
+                <button type="button" class="btn btn-outline-light btn-sm" data-bs-dismiss="modal">Not now</button>
+                <button type="button" class="btn btn-primary btn-sm" id="btnBookingGateMembership"><i class="fas fa-id-card me-1"></i>Buy membership</button>
             </div>
         </div>
     </div>
