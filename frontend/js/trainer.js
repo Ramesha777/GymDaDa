@@ -6,6 +6,7 @@ import { firebaseConfig } from './firebase-config.js';
 import { isMemberPlanActive } from './membership-utils.js';
 import { ensureGymPublicId, isValidGymPublicId } from './gym-public-id.js';
 import { openIDCardModal } from './IDCard.js';
+import { parseGymBookingCheckinRaw } from './booking-checkin-parse.js';
 
 firebase.initializeApp(firebaseConfig);
 
@@ -1790,19 +1791,6 @@ if ($('chatInput')) {
 
 /* ═══ Member check-in (reference / QR) ═══ */
 
-function parseBookingRefFromScan(raw) {
-    var s = String(raw || '').trim();
-    if (s.indexOf('GymDD|') === 0) s = s.slice(6).trim();
-    return s;
-}
-
-function trainerCheckinCodeKey(refRaw) {
-    var s = parseBookingRefFromScan(refRaw);
-    var digits = s.replace(/\s/g, '');
-    if (/^\d+$/.test(digits)) return digits;
-    return s;
-}
-
 function stopTrainerQrScanner() {
     if (!trainerHtml5QrCode) return;
     var inst = trainerHtml5QrCode;
@@ -1925,7 +1913,42 @@ function trainerRenderFullBooking(bookingId, b) {
 
 function trainerResolveBooking(refRaw) {
     if (!currentUid) return;
-    var codeKey = trainerCheckinCodeKey(refRaw);
+    var parsed = parseGymBookingCheckinRaw(refRaw);
+
+    if (parsed.kind === 'v2') {
+        trainerCheckinSetResult('<p class="text-muted small mb-0"><i class="fas fa-spinner fa-spin me-2"></i>Looking up…</p>');
+        db.collection('bookings').doc(parsed.bookingId).get()
+            .then(function(bsnap) {
+                if (!bsnap.exists) {
+                    trainerCheckinSetResult('<p class="text-danger small mb-0">Booking record missing. Ask admin.</p>');
+                    return;
+                }
+                var b = bsnap.data();
+                if ((b.memberId || '') !== parsed.memberId) {
+                    trainerCheckinSetResult(
+                        '<p class="text-warning small mb-0">QR data does not match this booking (member ID mismatch).</p>'
+                    );
+                    return;
+                }
+                var tid = (b.trainerId || '').trim();
+                if (tid !== currentUid) {
+                    trainerRenderOtherTrainerNotice({
+                        trainerId: b.trainerId,
+                        trainerName: b.trainerName,
+                        time: b.time
+                    });
+                    return;
+                }
+                trainerRenderFullBooking(bsnap.id, b);
+            })
+            .catch(function(err) {
+                console.error(err);
+                trainerCheckinSetResult('<p class="text-danger small mb-0">' + escHtml(err.message || 'Lookup failed.') + '</p>');
+            });
+        return;
+    }
+
+    var codeKey = parsed.codeKey;
     if (!codeKey) {
         trainerCheckinSetResult('<p class="text-warning small mb-0">Enter or scan a valid reference.</p>');
         return;

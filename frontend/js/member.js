@@ -1829,7 +1829,9 @@ $('btnConfirmBook').addEventListener('click', function() {
                 window.showBookingConfirmation(bookingCode, {
                     className: ds.className || '',
                     date: date,
-                    time: timeRaw
+                    time: timeRaw,
+                    memberId: currentUid,
+                    bookingId: slotId
                 });
             } else {
                 alert('Booking confirmed. Your reference number is ' + bookingCode + '.');
@@ -2261,6 +2263,8 @@ function loadBookings() {
                 if (codeRaw) {
                     tr.classList.add('bookings-row-clickable');
                     tr.setAttribute('data-booking-code', codeRaw);
+                    tr.setAttribute('data-booking-id', row.id);
+                    tr.setAttribute('data-member-id', (b.memberId || currentUid || '').trim());
                     tr.setAttribute('data-booking-class', b.className || '');
                     tr.setAttribute('data-booking-date', b.date || '');
                     tr.setAttribute('data-booking-time', b.time || '');
@@ -2395,10 +2399,14 @@ $('btnRefreshBookings').addEventListener('click', loadBookings);
         if (!tr || typeof window.showBookingConfirmation !== 'function') return;
         var code = tr.getAttribute('data-booking-code');
         if (!code) return;
+        var bid = tr.getAttribute('data-booking-id') || '';
+        var mid = tr.getAttribute('data-member-id') || '';
         window.showBookingConfirmation(code, {
             className: tr.getAttribute('data-booking-class') || '',
             date: tr.getAttribute('data-booking-date') || '',
-            time: tr.getAttribute('data-booking-time') || ''
+            time: tr.getAttribute('data-booking-time') || '',
+            memberId: mid || undefined,
+            bookingId: bid || undefined
         });
     });
 
@@ -2409,10 +2417,14 @@ $('btnRefreshBookings').addEventListener('click', loadBookings);
         if (typeof window.showBookingConfirmation !== 'function') return;
         var code = tr.getAttribute('data-booking-code');
         if (!code) return;
+        var bid = tr.getAttribute('data-booking-id') || '';
+        var mid = tr.getAttribute('data-member-id') || '';
         window.showBookingConfirmation(code, {
             className: tr.getAttribute('data-booking-class') || '',
             date: tr.getAttribute('data-booking-date') || '',
-            time: tr.getAttribute('data-booking-time') || ''
+            time: tr.getAttribute('data-booking-time') || '',
+            memberId: mid || undefined,
+            bookingId: bid || undefined
         });
     });
 })();

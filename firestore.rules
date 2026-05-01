@@ -460,8 +460,9 @@ service cloud.firestore {
     }
 
     // Lets approved trainers resolve a reference # to bookingId without exposing all bookings via list.
+    // Admins need get() for dashboard check-in / QR (same as trainer flow; list stays closed).
     match /bookingLookups/{code} {
-      allow get: if isApprovedTrainer();
+      allow get: if isApprovedTrainer() || isAdmin();
       allow list: if false;
       allow create: if isSignedIn()
         && request.resource.data.memberId == request.auth.uid

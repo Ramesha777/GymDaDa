@@ -10,14 +10,21 @@
         }
     }
 
-    /** Payload scanners see — prefix helps recognize GymDD codes */
-    function qrPayload(bookingCode) {
+    /**
+     * Payload scanners see — prefix helps recognize GymDD codes.
+     * v2 includes Firebase member uid + Firestore booking doc id for direct check-in lookup.
+     */
+    function qrPayload(bookingCode, options) {
+        options = options || {};
+        if (options.memberId && options.bookingId) {
+            return 'GymDD|v2|' + String(options.memberId) + '|' + String(options.bookingId);
+        }
         return 'GymDD|' + String(bookingCode);
     }
 
     /**
      * @param {string|number} bookingCode - reference stored on the booking
-     * @param {{className?: string, date?: string, time?: string}} [options]
+     * @param {{className?: string, date?: string, time?: string, memberId?: string, bookingId?: string}} [options]
      */
     window.showBookingConfirmation = function (bookingCode, options) {
         options = options || {};
@@ -44,13 +51,14 @@
             clearNode(qrHost);
             if (typeof QRCode !== 'undefined') {
                 try {
+                    var v2 = !!(options.memberId && options.bookingId);
                     new QRCode(qrHost, {
-                        text: qrPayload(bookingCode),
-                        width: 192,
-                        height: 192,
+                        text: qrPayload(bookingCode, options),
+                        width: v2 ? 240 : 192,
+                        height: v2 ? 240 : 192,
                         colorDark: '#0b0b1a',
                         colorLight: '#ffffff',
-                        correctLevel: QRCode.CorrectLevel.M
+                        correctLevel: v2 ? QRCode.CorrectLevel.H : QRCode.CorrectLevel.M
                     });
                 } catch (err) {
                     console.error(err);

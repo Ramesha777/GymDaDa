@@ -1,0 +1,31 @@
+Firestore: admin booking check-in / QR lookup (permission denied fix)
+
+admin.js reads:
+  - bookingLookups/{code}  (document get; QR / string refs)
+  - bookings  where bookingCode == N  (numeric ref fallback; no trainerId filter)
+
+trainer.js adds .where('trainerId', '==', currentUid) on the bookings query so it satisfies
+rules that only allow trainers to read their own rows. Admins have no such filter, so your
+rules must allow admin reads on both collections (same notion of admin as admin.js ensureAdmin:
+admins/{uid} doc exists OR users/{uid}.role == admin).
+
+Add a helper once in firestore.rules (inside match /databases/{database}/documents):
+
+  function isAdmin() {
+    return request.auth != null && (
+      exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+      (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+    );
+  }
+
+Then extend your existing allow read on bookings and bookingLookups with:
+
+  || isAdmin()
+
+Do not replace your full rules file; only merge these conditions into the current allow read
+for those two paths.
+
+After editing, deploy with:
+  firebase deploy --only firestore:rules
+or paste into Firebase console, Firestore, Rules, then Publish.

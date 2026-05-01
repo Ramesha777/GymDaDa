@@ -6,6 +6,7 @@ import { firebaseConfig } from './firebase-config.js';
 import { isMemberPlanActive } from './membership-utils.js';
 import { ensureGymPublicId, isValidGymPublicId } from './gym-public-id.js';
 import { openIDCardModal } from './IDCard.js';
+import { parseGymBookingCheckinRaw } from './booking-checkin-parse.js';
 
 firebase.initializeApp(firebaseConfig);
 
@@ -531,7 +532,6 @@ function aggregateMembershipLedgerSnaps(snapsArray) {
 
 function applyMembershipRevenueTotals(totals) {
     var netEl = $('statNetRevenue');
-<<<<<<< HEAD
     var grossEl = $('statGrossRevenue');
     var refEl = $('statRefundsTotal');
     if (!netEl && !grossEl && !refEl) return;
@@ -540,19 +540,6 @@ function applyMembershipRevenueTotals(totals) {
     if (grossEl) grossEl.textContent = adminFmtMoney(cur, totals.gross);
     if (refEl) refEl.textContent = adminFmtMoney(cur, totals.refunds);
     if (netEl) netEl.textContent = adminFmtMoney(cur, net);
-=======
-    var subEl = $('statRevBreakdown');
-    if (!netEl) return;
-    var net = Math.max(0, +(totals.gross - totals.refunds).toFixed(2));
-    netEl.textContent = adminFmtMoney(totals.currency, net);
-    if (subEl) {
-        subEl.textContent =
-            'Gross ' +
-            adminFmtMoney(totals.currency, totals.gross) +
-            ' \u00B7 Refunds ' +
-            adminFmtMoney(totals.currency, totals.refunds);
-    }
->>>>>>> 6a9eb5f935a4ed07bbc7a6f53a5297badf9a37ae
 }
 
 /** When collection-group queries fail (indexes / hosting), aggregate each member\u2019s subcollection — admin rule allows reads. */
@@ -571,12 +558,7 @@ function fetchMembershipPurchasesViaMembers() {
 
 function loadOverviewMembershipRevenue() {
     var netEl = $('statNetRevenue');
-<<<<<<< HEAD
     if (!netEl && !$('statGrossRevenue') && !$('statRefundsTotal')) return;
-=======
-    var subEl = $('statRevBreakdown');
-    if (!netEl) return;
->>>>>>> 6a9eb5f935a4ed07bbc7a6f53a5297badf9a37ae
 
     db.collectionGroup('membershipPurchases')
         .get()
@@ -591,15 +573,10 @@ function loadOverviewMembershipRevenue() {
         })
         .catch(function(err2) {
             console.error(err2);
-<<<<<<< HEAD
             var dash = '\u2014';
             if ($('statGrossRevenue')) $('statGrossRevenue').textContent = dash;
             if ($('statRefundsTotal')) $('statRefundsTotal').textContent = dash;
             if ($('statNetRevenue')) $('statNetRevenue').textContent = dash;
-=======
-            netEl.textContent = '\u2014';
-            if (subEl) subEl.textContent = 'Could not load ledger';
->>>>>>> 6a9eb5f935a4ed07bbc7a6f53a5297badf9a37ae
         });
 }
 
@@ -2185,19 +2162,6 @@ if ($('chatInput')) {
 
 /* ═══ Admin booking check-in (QR / reference — same payload as trainer) ═══ */
 
-function parseAdminBookingRefFromScan(raw) {
-    var s = String(raw || '').trim();
-    if (s.indexOf('GymDD|') === 0) s = s.slice(6).trim();
-    return s;
-}
-
-function adminCheckinCodeKey(refRaw) {
-    var s = parseAdminBookingRefFromScan(refRaw);
-    var digits = s.replace(/\s/g, '');
-    if (/^\d+$/.test(digits)) return digits;
-    return s;
-}
-
 function stopAdminQrScanner() {
     if (!adminHtml5QrCode) return;
     var inst = adminHtml5QrCode;
@@ -2280,7 +2244,43 @@ function adminRenderBookingDetail(bookingId, b) {
 
 function adminResolveBooking(refRaw) {
     if (!currentUid) return;
-    var codeKey = adminCheckinCodeKey(refRaw);
+    var parsed = parseGymBookingCheckinRaw(refRaw);
+
+    if (parsed.kind === 'v2') {
+        adminCheckinSetResult('<p class="text-muted small mb-0"><i class="fas fa-spinner fa-spin me-2"></i>Looking up…</p>');
+        db.collection('bookings').doc(parsed.bookingId).get()
+            .then(function(bsnap) {
+                if (!bsnap.exists) {
+                    adminCheckinSetResult('<p class="text-danger small mb-0">Booking record missing.</p>');
+                    return;
+                }
+                var b = bsnap.data();
+                if ((b.memberId || '') !== parsed.memberId) {
+                    adminCheckinSetResult(
+                        '<p class="text-warning small mb-0">QR data does not match this booking (member ID mismatch).</p>'
+                    );
+                    return;
+                }
+                adminRenderBookingDetail(bsnap.id, b);
+            })
+            .catch(function(err) {
+                console.error(err);
+                var msg = err.message || 'Lookup failed.';
+                if (
+                    err.code === 'permission-denied' ||
+                    String(err.code || '').indexOf('permission-denied') !== -1 ||
+                    /insufficient permissions/i.test(msg)
+                ) {
+                    msg =
+                        'Firestore blocked this lookup. In Firestore security rules, allow admins to read `bookingLookups` ' +
+                        'and `bookings` (same `isAdmin()` check as your other admin reads).';
+                }
+                adminCheckinSetResult('<p class="text-danger small mb-0">' + escHtml(msg) + '</p>');
+            });
+        return;
+    }
+
+    var codeKey = parsed.codeKey;
     if (!codeKey) {
         adminCheckinSetResult('<p class="text-warning small mb-0">Enter or scan a valid reference.</p>');
         return;
@@ -2317,7 +2317,18 @@ function adminResolveBooking(refRaw) {
         })
         .catch(function(err) {
             console.error(err);
-            adminCheckinSetResult('<p class="text-danger small mb-0">' + escHtml(err.message || 'Lookup failed.') + '</p>');
+            var msg = err.message || 'Lookup failed.';
+            if (
+                err.code === 'permission-denied' ||
+                String(err.code || '').indexOf('permission-denied') !== -1 ||
+                /insufficient permissions/i.test(msg)
+            ) {
+                msg =
+                    'Firestore blocked this lookup. In Firestore security rules, allow admins to read `bookingLookups` ' +
+                    'and `bookings` (same `isAdmin()` check as your other admin reads). Trainers use an extra ' +
+                    '`trainerId` filter so their queries satisfy stricter rules; admins need an explicit admin bypass.';
+            }
+            adminCheckinSetResult('<p class="text-danger small mb-0">' + escHtml(msg) + '</p>');
         });
 }
 
