@@ -1,6 +1,6 @@
 /**
  * Public punch kiosk — Firestore only (no auth). Barcode wedge + optional camera.
- * Doc id: day_{subjectUid}_{dateKey} — first write check-in, update check-out.
+ * Doc id: day_{subjectUid}_{dateKey} — alternates check-in / check-out all day; new dateKey after midnight starts fresh.
  */
 import { firebaseConfig } from './firebase-config.js';
 import { isValidGymPublicId } from './gym-public-id.js';
@@ -140,6 +140,7 @@ function runPunchTransaction(person) {
     var dateKey = localDateKey();
     var col = db.collection('gymPunchSessions');
     var ref = col.doc(dayPunchDocId(person.uid, dateKey));
+    var Fdel = firebase.firestore.FieldValue.delete();
 
     return db.runTransaction(function(transaction) {
         return transaction.get(ref).then(function(snap) {
@@ -151,29 +152,77 @@ function runPunchTransaction(person) {
                     displayName: person.displayName,
                     email: person.email || '',
                     dateKey: dateKey,
-                    status: 'open',
-                    checkInAt: firebase.firestore.FieldValue.serverTimestamp(),
-                    kioskSource: 'public'
+                    kioskSource: 'public',
+                    currentCheckIn: firebase.firestore.FieldValue.serverTimestamp(),
+                    completedVisits: []
                 });
-                return { action: 'in' };
+                return { action: 'in', visitNumber: 1 };
             }
+
             var data = snap.data();
-            if (data.status === 'completed') {
-                return { action: 'closed', message: 'You have already checked in and out today.' };
+            var completed = Array.isArray(data.completedVisits) ? data.completedVisits.slice() : [];
+            var cur = data.currentCheckIn != null ? data.currentCheckIn : null;
+            var isVisitModel = Array.isArray(data.completedVisits);
+            var hadLegacyShape = !isVisitModel;
+
+            if (hadLegacyShape) {
+                if (data.status === 'open' && data.checkInAt) {
+                    cur = data.checkInAt;
+                    completed = [];
+                } else if (data.status === 'completed' && data.checkInAt) {
+                    cur = null;
+                    completed = [
+                        {
+                            checkInAt: data.checkInAt,
+                            checkOutAt: data.checkOutAt,
+                            minutesOnSite: data.minutesOnSite
+                        }
+                    ];
+                }
             }
-            if (data.status === 'open') {
-                var cin = data.checkInAt;
+
+            if (cur != null) {
                 var cinMs = Date.now();
-                if (cin && typeof cin.toMillis === 'function') cinMs = cin.toMillis();
+                if (cur && typeof cur.toMillis === 'function') cinMs = cur.toMillis();
                 var mins = Math.max(0, Math.round((Date.now() - cinMs) / 60000));
-                transaction.update(ref, {
-                    status: 'completed',
-                    checkOutAt: firebase.firestore.FieldValue.serverTimestamp(),
-                    minutesOnSite: mins
-                });
-                return { action: 'out', minutesOnSite: mins };
+                var newVisits = completed.concat([
+                    {
+                        checkInAt: cur,
+                        checkOutAt: firebase.firestore.FieldValue.serverTimestamp(),
+                        minutesOnSite: mins
+                    }
+                ]);
+
+                var patch = {
+                    completedVisits: newVisits,
+                    currentCheckIn: null
+                };
+
+                if (hadLegacyShape && data.status === 'open') {
+                    patch.status = Fdel;
+                    patch.checkInAt = Fdel;
+                }
+
+                transaction.update(ref, patch);
+                return { action: 'out', minutesOnSite: mins, visitNumber: newVisits.length };
             }
-            return { action: 'err', message: 'Cannot process this punch.' };
+
+            if (hadLegacyShape && data.status === 'completed') {
+                transaction.update(ref, {
+                    currentCheckIn: firebase.firestore.FieldValue.serverTimestamp(),
+                    completedVisits: completed,
+                    status: Fdel,
+                    checkInAt: Fdel,
+                    checkOutAt: Fdel,
+                    minutesOnSite: Fdel
+                });
+                return { action: 'in', visitNumber: completed.length + 1 };
+            }
+
+            transaction.update(ref, {
+                currentCheckIn: firebase.firestore.FieldValue.serverTimestamp()
+            });
+            return { action: 'in', visitNumber: completed.length + 1 };
         });
     });
 }
@@ -215,46 +264,43 @@ function processScanPayload(raw) {
             var person = ctx.person;
             var result = ctx.result;
 
-            if (result.action === 'closed') {
-                showFeedback(
-                    'err',
-                    '<span class="punch-feedback-name">' +
-                        esc(person.displayName) +
-                        '</span><span class="punch-feedback-status">' +
-                        esc(result.message || 'Already finished for today.') +
-                        '</span>'
-                );
-                return;
-            }
             if (result.action === 'err') {
                 showFeedback('err', esc(result.message || 'Could not punch.'));
                 return;
             }
 
             if (result.action === 'in') {
+                var vin = result.visitNumber != null ? result.visitNumber : 1;
                 showFeedback(
                     'ok',
                     '<span class="punch-feedback-name">' +
                         esc(person.displayName) +
-                        '</span><span class="punch-feedback-status">Check-in accepted</span>' +
-                        '<span class="punch-feedback-hint text-white-50">Scan again before closing time to check out.</span>'
+                        '</span><span class="punch-feedback-status">Check-in</span>' +
+                        '<span class="punch-feedback-hint text-white-50">Visit ' +
+                        esc(String(vin)) +
+                        ' — you are <strong>checked in</strong>.</span>' +
+                        '<span class="punch-feedback-hint text-white-50 d-block">Next scan will <strong>check you out</strong>.</span>'
                 );
-                scheduleOkFeedbackHide(1000);
+                scheduleOkFeedbackHide(1400);
             } else if (result.action === 'out') {
                 var hm =
                     typeof result.minutesOnSite === 'number'
                         ? formatHoursMins(result.minutesOnSite)
                         : '—';
+                var vout = result.visitNumber != null ? result.visitNumber : 1;
                 showFeedback(
                     'ok',
                     '<span class="punch-feedback-name">' +
                         esc(person.displayName) +
-                        '</span><span class="punch-feedback-status">Checkout accepted</span>' +
-                        '<span class="punch-feedback-hint text-white-50">Today on site: <strong>' +
+                        '</span><span class="punch-feedback-status">Check-out</span>' +
+                        '<span class="punch-feedback-hint text-white-50">Visit ' +
+                        esc(String(vout)) +
+                        ' — <strong>checked out</strong>. This visit: <strong>' +
                         esc(hm) +
-                        '</strong></span>'
+                        '</strong>.</span>' +
+                        '<span class="punch-feedback-hint text-white-50 d-block">Next scan will <strong>check you in</strong> again.</span>'
                 );
-                scheduleOkFeedbackHide(1000);
+                scheduleOkFeedbackHide(1400);
             }
         })
         .catch(function(err) {

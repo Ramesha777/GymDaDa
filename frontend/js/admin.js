@@ -320,7 +320,9 @@ var titles = {
 
     contactMessages: '<i class="fas fa-envelope-open-text me-2"></i>Contact messages',
 
-    punchAttendance: '<i class="fas fa-clock me-2"></i>Punch attendance'
+    punchDetail: '<i class="fas fa-list-alt me-2"></i>Punch log',
+
+    punchHours: '<i class="fas fa-user-clock me-2"></i>Hours tracking'
 
 };
 
@@ -353,7 +355,8 @@ function switchSection(name) {
     if (name === 'classes') loadClassesAdmin();
     if (name === 'chat') loadAdminChatTrainers();
     if (name === 'contactMessages') loadContactMessages();
-    if (name === 'punchAttendance') loadAdminPunchAttendance();
+    if (name === 'punchDetail') loadAdminPunchAttendance(false);
+    if (name === 'punchHours') loadAdminPunchHoursView(false);
 }
 
 var sidebar = $('sidebar');
@@ -2481,7 +2484,7 @@ function adminFormatCompletedTime(ts) {
     return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
-function appendAdminClassLogRow(tbody, trainerName, className, sessionDateIso, scheduleTimeStr, comp, orphanTip) {
+function appendAdminClassLogRow(tbody, trainerName, specialisation, className, sessionDateIso, scheduleTimeStr, comp, orphanTip) {
     var st = adminEffectiveSessionStatus(comp);
     var noteRaw = comp && comp.notes ? String(comp.notes).trim() : '';
     var noteDisplay = orphanTip
@@ -2501,10 +2504,15 @@ function appendAdminClassLogRow(tbody, trainerName, className, sessionDateIso, s
     }
 
     var classCell = escHtml(className || '—');
+    var specTrim = specialisation && String(specialisation).trim();
+    var specCell = specTrim
+        ? '<span class="badge bg-info text-dark">' + escHtml(specTrim) + '</span>'
+        : '<span class="text-muted">—</span>';
 
     var tr = document.createElement('tr');
     tr.innerHTML =
         '<td>' + escHtml(trainerName) + '</td>' +
+        '<td class="small">' + specCell + '</td>' +
         '<td>' + classCell + '</td>' +
         '<td>' + dayCell + '</td>' +
         '<td>' + adminSessionStatusBadgeHtml(st) + '</td>' +
@@ -2535,18 +2543,26 @@ function loadAdminTrainerClassTracking() {
     }
 
     tbody.innerHTML =
-        '<tr><td colspan="6" class="text-center text-muted py-4">Loading weekly log…</td></tr>';
+        '<tr><td colspan="7" class="text-center text-muted py-4">Loading weekly log…</td></tr>';
 
     Promise.all([
         db.collection('classes').get(),
-        db.collection('trainerClassCompletions')
+        db
+            .collection('trainerClassCompletions')
             .where('sessionDate', '>=', w0)
             .where('sessionDate', '<=', w1)
-            .get()
+            .get(),
+        db.collection('trainers').get()
     ])
         .then(function(parts) {
             var snapClasses = parts[0];
             var snapComp = parts[1];
+            var snapTrainers = parts[2];
+            var trainerSpecById = {};
+            snapTrainers.forEach(function(tdoc) {
+                var td = tdoc.data();
+                trainerSpecById[tdoc.id] = (td.specialization && String(td.specialization).trim()) || '';
+            });
             var compById = {};
             snapComp.forEach(function(doc) {
                 compById[doc.id] = doc.data();
@@ -2567,9 +2583,11 @@ function loadAdminTrainerClassTracking() {
                 usedComp[did] = true;
                 var comp = compById[did];
                 var tnm = ((c.trainerName || '').trim() || '(set trainer name on class)');
+                var spec = trainerSpecById[tid] || '';
                 appendAdminClassLogRow(
                     tbody,
                     tnm,
+                    spec,
                     (c.name || '').trim(),
                     sessionDate,
                     (c.schedule || {}).time || '',
@@ -2583,9 +2601,11 @@ function loadAdminTrainerClassTracking() {
                 var d = doc.data();
                 var tid = (d.trainerId || '').trim();
                 if (filterTid && tid !== filterTid) return;
+                var spec = tid ? trainerSpecById[tid] || '' : '';
                 appendAdminClassLogRow(
                     tbody,
                     (d.trainerName || '').trim() || '(trainer)',
+                    spec,
                     d.className || d.classId || '—',
                     d.sessionDate,
                     d.time || '—',
@@ -2596,13 +2616,13 @@ function loadAdminTrainerClassTracking() {
 
             if (!tbody.querySelector('tr')) {
                 tbody.innerHTML =
-                    '<tr><td colspan="6" class="text-muted text-center py-4">No sessions this week.</td></tr>';
+                    '<tr><td colspan="7" class="text-muted text-center py-4">No sessions this week.</td></tr>';
             }
         })
         .catch(function(err) {
             console.error(err);
             tbody.innerHTML =
-                '<tr><td colspan="6" class="text-danger text-center py-4">Could not load class log.</td></tr>';
+                '<tr><td colspan="7" class="text-danger text-center py-4">Could not load class log.</td></tr>';
         });
 }
 
@@ -2737,6 +2757,172 @@ function adminFormatPunchDur(totalMins) {
     return h + 'h ' + String(m).padStart(2, '0') + 'm';
 }
 
+/** Decimal hours (two places) for hourly wage math — kiosk duration only. */
+function punchHoursMinsToDecimalHoursForWage(mins) {
+    if (mins == null || isNaN(mins) || mins < 1) return null;
+    return Math.round((mins / 60) * 100) / 100;
+}
+
+/** dateKey YYYY-MM-DD → Monday YYYY-MM-DD of that week (local calendar). */
+function punchHoursDateKeyToMondayKey(dateKey) {
+    var p = String(dateKey || '').split('-');
+    if (p.length !== 3) return dateKey || '';
+    var y = parseInt(p[0], 10);
+    var m = parseInt(p[1], 10) - 1;
+    var day = parseInt(p[2], 10);
+    if (isNaN(y) || isNaN(m) || isNaN(day)) return dateKey || '';
+    var d = new Date(y, m, day);
+    var dow = d.getDay();
+    var diff = dow === 0 ? -6 : 1 - dow;
+    d.setDate(d.getDate() + diff);
+    return d.getFullYear() + '-' + adminPad2(d.getMonth() + 1) + '-' + adminPad2(d.getDate());
+}
+
+function punchHoursWeekRangeLabel(mondayKey) {
+    var p = String(mondayKey || '').split('-');
+    if (p.length !== 3) return mondayKey || '';
+    var y = parseInt(p[0], 10);
+    var mo = parseInt(p[1], 10) - 1;
+    var da = parseInt(p[2], 10);
+    if (isNaN(y) || isNaN(mo) || isNaN(da)) return mondayKey || '';
+    var d0 = new Date(y, mo, da);
+    var d1 = new Date(y, mo, da);
+    d1.setDate(d1.getDate() + 6);
+    var o = { month: 'short', day: 'numeric' };
+    return (
+        'Mon ' +
+        d0.toLocaleDateString(undefined, o) +
+        ' \u2013 Sun ' +
+        d1.toLocaleDateString(undefined, Object.assign({ year: 'numeric' }, o))
+    );
+}
+
+function punchTotalCompletedMinutesFromDoc(d) {
+    if (Array.isArray(d.completedVisits)) {
+        var s = 0;
+        d.completedVisits.forEach(function(v) {
+            if (v && typeof v.minutesOnSite === 'number' && v.minutesOnSite >= 1) s += v.minutesOnSite;
+        });
+        return s;
+    }
+    if ((d.status || '') === 'completed' && typeof d.minutesOnSite === 'number' && d.minutesOnSite >= 1) {
+        return d.minutesOnSite;
+    }
+    return 0;
+}
+
+function adminMondayOfWeekLocalFromDate(dt) {
+    var d = new Date(dt.getFullYear(), dt.getMonth(), dt.getDate());
+    var day = d.getDay();
+    var diff = day === 0 ? -6 : 1 - day;
+    d.setDate(d.getDate() + diff);
+    return d;
+}
+
+function punchHoursBuildDailyTableRows(filteredParentRows) {
+    var list = [];
+    filteredParentRows.forEach(function(row) {
+        var d = row.d;
+        var mins = punchTotalCompletedMinutesFromDoc(d);
+        if (mins < 1) return;
+        var dk = (d.dateKey || '').trim();
+        var nm = (d.displayName && String(d.displayName).trim()) || (d.subjectUid || row.id);
+        list.push({
+            sortKey: dk + '\0' + nm,
+            periodLabel: dk,
+            displayName: nm,
+            role: (d.role || '').trim(),
+            minutes: mins
+        });
+    });
+    list.sort(function(a, b) {
+        return a.sortKey.localeCompare(b.sortKey);
+    });
+    return list;
+}
+
+function punchHoursBuildWeeklyTableRows(filteredParentRows) {
+    var map = {};
+    filteredParentRows.forEach(function(row) {
+        var d = row.d;
+        var mins = punchTotalCompletedMinutesFromDoc(d);
+        if (mins < 1) return;
+        var dk = (d.dateKey || '').trim();
+        if (!dk) return;
+        var wk = punchHoursDateKeyToMondayKey(dk);
+        var uid = (d.subjectUid || '').trim() || row.id;
+        var key = uid + '|' + wk;
+        if (!map[key]) {
+            var nm = (d.displayName && String(d.displayName).trim()) || uid;
+            map[key] = {
+                weekKey: wk,
+                sortKey: wk + '\0' + nm,
+                periodLabel: punchHoursWeekRangeLabel(wk),
+                displayName: nm,
+                role: (d.role || '').trim(),
+                minutes: 0
+            };
+        }
+        map[key].minutes += mins;
+    });
+    var list = Object.keys(map).map(function(k) {
+        return map[k];
+    });
+    list.sort(function(a, b) {
+        return a.sortKey.localeCompare(b.sortKey);
+    });
+    return list;
+}
+
+function punchHoursSingleTableRender(filteredRows, granularity) {
+    var tbody = $('punchHoursTableBody');
+    if (!tbody) return;
+    var rows =
+        granularity === 'week' ? punchHoursBuildWeeklyTableRows(filteredRows) : punchHoursBuildDailyTableRows(filteredRows);
+    if (!rows.length) {
+        tbody.innerHTML =
+            '<tr><td colspan="5" class="text-center text-muted py-3">No completed visit time in this range. Adjust dates, view, or filters.</td></tr>';
+        return;
+    }
+    tbody.innerHTML = '';
+    rows.forEach(function(r) {
+        var dec = punchHoursMinsToDecimalHoursForWage(r.minutes);
+        var tr = document.createElement('tr');
+        tr.innerHTML =
+            '<td class="text-nowrap">' +
+            escHtml(r.periodLabel) +
+            '</td><td>' +
+            escHtml(r.displayName) +
+            '</td><td>' +
+            escHtml(r.role || '\u2014') +
+            '</td><td class="text-nowrap"><span class="hours-decimal">' +
+            (dec != null ? dec.toFixed(2) : '\u2014') +
+            '</span></td><td class="small text-muted">' +
+            escHtml(adminFormatPunchDur(r.minutes)) +
+            '</td>';
+        tbody.appendChild(tr);
+    });
+}
+
+function fetchPunchAttendanceCache(forceReload) {
+    if (!forceReload && punchAttendanceCachedRows != null) {
+        return Promise.resolve(punchAttendanceCachedRows);
+    }
+    return db
+        .collection('gymPunchSessions')
+        .orderBy('checkInAt', 'desc')
+        .limit(1200)
+        .get()
+        .then(function(snap) {
+            var rows = [];
+            snap.forEach(function(doc) {
+                rows.push({ id: doc.id, d: doc.data() });
+            });
+            punchAttendanceCachedRows = rows;
+            return rows;
+        });
+}
+
 function punchAdminFmtTs(ts) {
     if (!ts || typeof ts.toDate !== 'function') return '\u2014';
     try {
@@ -2748,6 +2934,7 @@ function punchAdminFmtTs(ts) {
 
 var punchAttendanceCachedRows = null;
 var punchSearchDebounceTimer = null;
+var punchHoursSearchDebounceTimer = null;
 
 function punchAttendanceMatchesSearch(d, rowId, qLower) {
     if (!qLower) return true;
@@ -2776,30 +2963,88 @@ function punchAttendanceFilterRows(rows, roleF, fromK, toK, qLower) {
     });
 }
 
+function punchDocToExpandedAttendanceRows(parentRow) {
+    var d = parentRow.d;
+    var out = [];
+    if (Array.isArray(d.completedVisits) && d.completedVisits.length) {
+        d.completedVisits.forEach(function(v, i) {
+            out.push({ parent: parentRow, visit: v, visitNum: i + 1, open: false });
+        });
+    } else if ((d.status || '') === 'completed' && typeof d.minutesOnSite === 'number') {
+        out.push({
+            parent: parentRow,
+            visit: { checkInAt: d.checkInAt, checkOutAt: d.checkOutAt, minutesOnSite: d.minutesOnSite },
+            visitNum: 1,
+            open: false
+        });
+    }
+    if (d.currentCheckIn != null) {
+        out.push({
+            parent: parentRow,
+            visit: { checkInAt: d.currentCheckIn, checkOutAt: null, minutesOnSite: null },
+            visitNum: (Array.isArray(d.completedVisits) ? d.completedVisits.length : 0) + 1,
+            open: true
+        });
+    } else if ((d.status || '') === 'open' && d.checkInAt && !Array.isArray(d.completedVisits)) {
+        out.push({
+            parent: parentRow,
+            visit: { checkInAt: d.checkInAt, checkOutAt: null, minutesOnSite: null },
+            visitNum: 1,
+            open: true
+        });
+    }
+    if (!out.length) {
+        out.push({ parent: parentRow, visit: null, visitNum: '\u2014', open: false, empty: true });
+    }
+    return out;
+}
+
 function punchAttendanceRenderFilteredRows(rows) {
     var tbody = $('punchAttendanceBody');
     if (!tbody) return;
     if (!rows.length) {
         tbody.innerHTML =
-            '<tr><td colspan="8" class="text-center text-muted py-3">No sessions for this filter.</td></tr>';
+            '<tr><td colspan="9" class="text-center text-muted py-3">No sessions for this filter.</td></tr>';
         return;
     }
+    var flat = [];
+    rows.forEach(function(pr) {
+        punchDocToExpandedAttendanceRows(pr).forEach(function(r) {
+            flat.push(r);
+        });
+    });
     tbody.innerHTML = '';
-    rows.forEach(function(row) {
-        var d = row.d;
+    flat.forEach(function(er) {
+        var d = er.parent.d;
         var tr = document.createElement('tr');
-        var st = d.status || '';
-        var outCell = punchAdminFmtTs(d.checkOutAt);
-        var dur =
-            st === 'completed' && typeof d.minutesOnSite === 'number'
-                ? adminFormatPunchDur(d.minutesOnSite)
-                : st === 'open'
-                  ? '\u2014 (open)'
-                  : '\u2014';
+        if (er.empty) {
+            tr.innerHTML =
+                '<td>' +
+                escHtml(d.dateKey || '') +
+                '</td><td>' +
+                escHtml(String(er.visitNum)) +
+                '</td><td colspan="7" class="text-muted small">No visit data on this row</td>';
+            tbody.appendChild(tr);
+            return;
+        }
+        var v = er.visit;
+        var st = 'open';
+        var outCell = '\u2014';
+        var dur = '\u2014';
+        if (v && v.checkOutAt && typeof v.minutesOnSite === 'number') {
+            st = 'completed';
+            outCell = punchAdminFmtTs(v.checkOutAt);
+            dur = adminFormatPunchDur(v.minutesOnSite);
+        } else if (er.open || (v && !v.checkOutAt)) {
+            st = 'open';
+            dur = '\u2014 (open)';
+        }
         var badgeClass = st === 'open' ? 'warning text-dark' : 'success';
         tr.innerHTML =
             '<td>' +
             escHtml(d.dateKey || '') +
+            '</td><td class="text-nowrap">' +
+            escHtml(String(er.visitNum)) +
             '</td><td>' +
             escHtml(d.displayName || '') +
             '</td><td>' +
@@ -2807,7 +3052,7 @@ function punchAttendanceRenderFilteredRows(rows) {
             '</td><td>' +
             escHtml(d.gymPublicId || '') +
             '</td><td>' +
-            escHtml(punchAdminFmtTs(d.checkInAt)) +
+            escHtml(v ? punchAdminFmtTs(v.checkInAt) : '\u2014') +
             '</td><td>' +
             escHtml(outCell) +
             '</td><td>' +
@@ -2847,38 +3092,98 @@ function loadAdminPunchAttendance(forceReload) {
 
     if (!tbody) return;
 
-    var applyCached = function() {
+    var applyDetail = function() {
         var filtered = punchAttendanceFilterRows(punchAttendanceCachedRows, roleF, fromK, toK, qLower);
         punchAttendanceRenderFilteredRows(filtered);
     };
 
     if (!forceReload && punchAttendanceCachedRows != null) {
-        applyCached();
+        applyDetail();
         return;
     }
 
     tbody.innerHTML =
-        '<tr><td colspan="8" class="text-center text-muted py-3">Loading\u2026</td></tr>';
+        '<tr><td colspan="9" class="text-center text-muted py-3">Loading\u2026</td></tr>';
 
-    db.collection('gymPunchSessions')
-        .orderBy('checkInAt', 'desc')
-        .limit(400)
-        .get()
-        .then(function(snap) {
-            var rows = [];
-            snap.forEach(function(doc) {
-                rows.push({ id: doc.id, d: doc.data() });
-            });
-            punchAttendanceCachedRows = rows;
-            var filtered = punchAttendanceFilterRows(rows, roleF, fromK, toK, qLower);
-            punchAttendanceRenderFilteredRows(filtered);
+    fetchPunchAttendanceCache(true)
+        .then(function() {
+            applyDetail();
         })
         .catch(function(err) {
             console.error(err);
             punchAttendanceCachedRows = null;
             tbody.innerHTML =
-                '<tr><td colspan="8" class="text-center text-danger py-3">Could not load punch data.</td></tr>';
+                '<tr><td colspan="9" class="text-center text-danger py-3">Could not load punch data.</td></tr>';
         });
+}
+
+function loadAdminPunchHoursView(forceReload) {
+    forceReload = !!forceReload;
+    var tbody = $('punchHoursTableBody');
+    var fromEl = $('punchHoursFilterFrom');
+    var toEl = $('punchHoursFilterTo');
+    if (fromEl && toEl && !fromEl.value && !toEl.value) {
+        var now = new Date();
+        var y = now.getFullYear();
+        var m = String(now.getMonth() + 1).padStart(2, '0');
+        var day = String(now.getDate()).padStart(2, '0');
+        toEl.value = y + '-' + m + '-' + day;
+        var f = new Date(now);
+        f.setDate(f.getDate() - 14);
+        var fy = f.getFullYear();
+        var fm = String(f.getMonth() + 1).padStart(2, '0');
+        var fd = String(f.getDate()).padStart(2, '0');
+        fromEl.value = fy + '-' + fm + '-' + fd;
+    }
+
+    var roleF = ($('punchHoursFilterRole') && $('punchHoursFilterRole').value) || '';
+    var fromK = (fromEl && fromEl.value) || '';
+    var toK = (toEl && toEl.value) || '';
+    var qLower = (($('punchHoursSearch') && $('punchHoursSearch').value) || '').trim().toLowerCase();
+    var gran = ($('punchHoursGranularity') && $('punchHoursGranularity').value) || 'day';
+
+    if (!tbody) return;
+
+    var applyHours = function() {
+        var filtered = punchAttendanceFilterRows(punchAttendanceCachedRows, roleF, fromK, toK, qLower);
+        punchHoursSingleTableRender(filtered, gran);
+    };
+
+    if (!forceReload && punchAttendanceCachedRows != null) {
+        applyHours();
+        return;
+    }
+
+    tbody.innerHTML =
+        '<tr><td colspan="5" class="text-center text-muted py-3">Loading\u2026</td></tr>';
+
+    fetchPunchAttendanceCache(true)
+        .then(function() {
+            applyHours();
+        })
+        .catch(function(err) {
+            console.error(err);
+            punchAttendanceCachedRows = null;
+            tbody.innerHTML =
+                '<tr><td colspan="5" class="text-center text-danger py-3">Could not load punch data.</td></tr>';
+        });
+}
+
+function loadAdminPunchHoursDebounced() {
+    clearTimeout(punchHoursSearchDebounceTimer);
+    punchHoursSearchDebounceTimer = setTimeout(function() {
+        loadAdminPunchHoursView(false);
+    }, 280);
+}
+
+function punchHoursSetThisWeekFilters() {
+    var mon = adminMondayOfWeekLocalFromDate(new Date());
+    var sun = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + 6);
+    var f = $('punchHoursFilterFrom');
+    var t = $('punchHoursFilterTo');
+    if (f) f.value = adminFormatYMD(mon);
+    if (t) t.value = adminFormatYMD(sun);
+    loadAdminPunchHoursView(false);
 }
 
 function loadAdminPunchAttendanceDebounced() {
@@ -2905,3 +3210,35 @@ if ($('punchAdminFilterTo'))
         loadAdminPunchAttendance(false);
     });
 if ($('punchAdminSearch')) $('punchAdminSearch').addEventListener('input', loadAdminPunchAttendanceDebounced);
+
+if ($('btnRefreshPunchHours')) {
+    $('btnRefreshPunchHours').addEventListener('click', function() {
+        loadAdminPunchHoursView(true);
+    });
+}
+if ($('btnPunchHoursThisWeek')) {
+    $('btnPunchHoursThisWeek').addEventListener('click', punchHoursSetThisWeekFilters);
+}
+if ($('punchHoursFilterRole')) {
+    $('punchHoursFilterRole').addEventListener('change', function() {
+        loadAdminPunchHoursView(false);
+    });
+}
+if ($('punchHoursFilterFrom')) {
+    $('punchHoursFilterFrom').addEventListener('change', function() {
+        loadAdminPunchHoursView(false);
+    });
+}
+if ($('punchHoursFilterTo')) {
+    $('punchHoursFilterTo').addEventListener('change', function() {
+        loadAdminPunchHoursView(false);
+    });
+}
+if ($('punchHoursGranularity')) {
+    $('punchHoursGranularity').addEventListener('change', function() {
+        loadAdminPunchHoursView(false);
+    });
+}
+if ($('punchHoursSearch')) {
+    $('punchHoursSearch').addEventListener('input', loadAdminPunchHoursDebounced);
+}

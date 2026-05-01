@@ -181,21 +181,75 @@ body { font-family: 'Poppins', sans-serif; background: var(--bg); color: var(--t
 }
 .dash-card .card-body { padding: 20px; }
 
-/* ── Punch attendance: transparent search ── */
-#sec-punchAttendance #punchAdminSearch.form-control {
+/* ── Punch sections: transparent search ── */
+#sec-punchDetail #punchAdminSearch.form-control,
+#sec-punchHours #punchHoursSearch.form-control {
     background-color: transparent !important;
     border-color: rgba(255, 255, 255, 0.22);
     color: rgba(255, 255, 255, 0.95);
     box-shadow: none;
 }
-#sec-punchAttendance #punchAdminSearch.form-control:focus {
+#sec-punchDetail #punchAdminSearch.form-control:focus,
+#sec-punchHours #punchHoursSearch.form-control:focus {
     background-color: rgba(255, 255, 255, 0.06) !important;
     border-color: rgba(255, 255, 255, 0.38);
     color: #fff;
     box-shadow: 0 0 0 2px rgba(255, 107, 53, 0.22);
 }
-#sec-punchAttendance #punchAdminSearch.form-control::placeholder {
+#sec-punchDetail #punchAdminSearch.form-control::placeholder,
+#sec-punchHours #punchHoursSearch.form-control::placeholder {
     color: rgba(255, 255, 255, 0.45);
+}
+
+/* ── Punch sections: date + role/view filters (transparent, white text) ── */
+#sec-punchDetail #punchAdminFilterFrom.form-control,
+#sec-punchDetail #punchAdminFilterTo.form-control,
+#sec-punchHours #punchHoursFilterFrom.form-control,
+#sec-punchHours #punchHoursFilterTo.form-control {
+    background-color: transparent !important;
+    border-color: rgba(255, 255, 255, 0.22);
+    color: #fff;
+    box-shadow: none;
+}
+#sec-punchDetail #punchAdminFilterFrom.form-control:focus,
+#sec-punchDetail #punchAdminFilterTo.form-control:focus,
+#sec-punchHours #punchHoursFilterFrom.form-control:focus,
+#sec-punchHours #punchHoursFilterTo.form-control:focus {
+    background-color: rgba(255, 255, 255, 0.08) !important;
+    border-color: rgba(255, 255, 255, 0.38);
+    color: #fff;
+    box-shadow: 0 0 0 2px rgba(255, 107, 53, 0.22);
+}
+#sec-punchDetail #punchAdminFilterFrom::-webkit-calendar-picker-indicator,
+#sec-punchDetail #punchAdminFilterTo::-webkit-calendar-picker-indicator,
+#sec-punchHours #punchHoursFilterFrom::-webkit-calendar-picker-indicator,
+#sec-punchHours #punchHoursFilterTo::-webkit-calendar-picker-indicator {
+    filter: invert(1);
+    opacity: 0.9;
+    cursor: pointer;
+}
+#sec-punchDetail #punchAdminFilterRole.form-select,
+#sec-punchHours #punchHoursFilterRole.form-select,
+#sec-punchHours #punchHoursGranularity.form-select {
+    --bs-form-select-bg-img: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23ffffff' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m2 5 6 6 6-6'/%3e%3c/svg%3e");
+    background-color: transparent !important;
+    border-color: rgba(255, 255, 255, 0.22);
+    color: #fff;
+    box-shadow: none;
+}
+#sec-punchDetail #punchAdminFilterRole.form-select:focus,
+#sec-punchHours #punchHoursFilterRole.form-select:focus,
+#sec-punchHours #punchHoursGranularity.form-select:focus {
+    background-color: rgba(255, 255, 255, 0.08) !important;
+    border-color: rgba(255, 255, 255, 0.38);
+    color: #fff;
+    box-shadow: 0 0 0 2px rgba(255, 107, 53, 0.22);
+}
+#sec-punchDetail #punchAdminFilterRole option,
+#sec-punchHours #punchHoursFilterRole option,
+#sec-punchHours #punchHoursGranularity option {
+    background-color: var(--card, #1a1a36);
+    color: #fff;
 }
 
 /* ── Table ── */
@@ -284,58 +338,65 @@ body { font-family: 'Poppins', sans-serif; background: var(--bg); color: var(--t
 /* ── Trainer Availability Overview ── */
 .trainer-avail-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-    gap: 16px;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 10px;
 }
 .trainer-avail-card {
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 12px;
+    border-radius: 8px;
     overflow: hidden;
 }
 .trainer-avail-card-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 14px 16px;
+    gap: 8px;
+    padding: 8px 12px;
     border-bottom: 1px solid var(--border);
+}
+.trainer-avail-card-header .badge {
+    font-size: 0.65rem;
+    font-weight: 500;
+    padding: 0.2em 0.45em;
 }
 .trainer-avail-name {
     font-weight: 600;
-    font-size: 14px;
+    font-size: 13px;
     color: #fff;
+    line-height: 1.25;
 }
 .trainer-avail-card-body {
-    padding: 12px 16px;
+    padding: 8px 12px;
 }
 .trainer-avail-week {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 3px;
 }
 .trainer-avail-day {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 6px 0;
+    gap: 6px;
+    padding: 3px 0;
     border-bottom: 1px solid var(--border);
-    font-size: 13px;
+    font-size: 12px;
 }
 .trainer-avail-day:last-child { border-bottom: none; }
 .trainer-avail-day .day-label {
-    min-width: 36px;
+    min-width: 28px;
     font-weight: 700;
-    font-size: 11px;
+    font-size: 10px;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.4px;
 }
 .trainer-avail-day.available .day-label { color: #22c55e; }
 .trainer-avail-day.unavailable .day-label { color: var(--muted); }
 .trainer-avail-day .time-chip {
     display: inline-block;
-    padding: 2px 8px;
-    border-radius: 6px;
-    font-size: 12px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 11px;
     font-weight: 500;
 }
 .trainer-avail-day.available .time-chip {
@@ -344,7 +405,7 @@ body { font-family: 'Poppins', sans-serif; background: var(--bg); color: var(--t
 }
 .trainer-avail-day.unavailable .time-chip.off {
     color: var(--muted);
-    font-size: 11px;
+    font-size: 10px;
 }
 
 /* ── Trainer availability preview in class modal ── */
@@ -723,6 +784,35 @@ body { font-family: 'Poppins', sans-serif; background: var(--bg); color: var(--t
     flex: 1; display: flex;
     align-items: center; justify-content: center;
     color: var(--muted); font-size: 14px;
+}
+
+/* ── Punch: hours tracking panel ── */
+.punch-hours-panel {
+    border: 1px solid var(--border-light);
+    border-radius: 10px;
+    padding: 14px 16px;
+    background: rgba(0, 0, 0, 0.2);
+}
+.punch-hours-panel h6 {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+    margin-bottom: 10px;
+}
+.punch-hours-panel .table-sm td,
+.punch-hours-panel .table-sm th {
+    padding: 0.4rem 0.5rem;
+    vertical-align: top;
+}
+.punch-hours-panel .hours-decimal {
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    color: #fff;
+}
+.punch-hours-panel .hours-hint {
+    font-size: 11px;
+    color: var(--muted);
 }
 
 @media (max-width: 992px) {

@@ -65,6 +65,158 @@ service cloud.firestore {
         && sessionId.matches('^day_[A-Za-z0-9_-]{10,140}_[0-9]{4}-[0-9]{2}-[0-9]{2}$');
     }
 
+    // Multi visit / day: check-in ↔ check-out alternates; new day (doc id) resets automatically at midnight local date.
+    function gymPunchVisitIdentityOkData(d) {
+      return d.subjectUid is string
+        && d.subjectUid.size() >= 10
+        && d.subjectUid.size() <= 128
+        && d.role in ['member', 'trainer']
+        && d.gymPublicId is string
+        && d.gymPublicId.size() <= 16
+        && d.displayName is string
+        && d.displayName.size() >= 1
+        && d.displayName.size() <= 200
+        && d.email is string
+        && d.email.size() < 320
+        && d.dateKey is string
+        && d.dateKey.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && d.kioskSource == 'public';
+    }
+
+    function gymPunchVisitIdentityMatch(r, d) {
+      return d.subjectUid == r.subjectUid
+        && d.role == r.role
+        && d.gymPublicId == r.gymPublicId
+        && d.displayName == r.displayName
+        && d.email == r.email
+        && d.dateKey == r.dateKey
+        && d.kioskSource == r.kioskSource;
+    }
+
+    function gymPunchVisitOpenCreatePublic(sessionId) {
+      let d = request.resource.data;
+      return d.keys().hasOnly([
+          'subjectUid',
+          'role',
+          'gymPublicId',
+          'displayName',
+          'email',
+          'dateKey',
+          'kioskSource',
+          'currentCheckIn',
+          'completedVisits'
+        ])
+        && gymPunchVisitIdentityOkData(d)
+        && d.currentCheckIn == request.time
+        && d.completedVisits is list
+        && d.completedVisits.size() == 0
+        && sessionId == ('day_' + d.subjectUid + '_' + d.dateKey)
+        && sessionId.matches('^day_[A-Za-z0-9_-]{10,140}_[0-9]{4}-[0-9]{2}-[0-9]{2}$');
+    }
+
+    function gymPunchVisitCheckoutOk() {
+      let r = resource.data;
+      let d = request.resource.data;
+      let nx = d.completedVisits.size() - 1;
+      let last = d.completedVisits[nx];
+      return gymPunchVisitIdentityMatch(r, d)
+        && r.keys().hasAny(['currentCheckIn'])
+        && r.currentCheckIn is timestamp
+        && r.completedVisits is list
+        && d.completedVisits is list
+        && d.completedVisits.size() == r.completedVisits.size() + 1
+        && d.currentCheckIn == null
+        && last.keys().hasOnly(['checkInAt', 'checkOutAt', 'minutesOnSite'])
+        && last.checkInAt == r.currentCheckIn
+        && last.checkOutAt == request.time
+        && last.minutesOnSite is number
+        && last.minutesOnSite >= 0
+        && last.minutesOnSite <= 2000
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'currentCheckIn',
+          'completedVisits'
+        ]);
+    }
+
+    function gymPunchVisitCheckInOk() {
+      let r = resource.data;
+      let d = request.resource.data;
+      return gymPunchVisitIdentityMatch(r, d)
+        && r.keys().hasAny(['currentCheckIn'])
+        && r.currentCheckIn == null
+        && r.completedVisits is list
+        && d.completedVisits is list
+        && d.completedVisits == r.completedVisits
+        && d.currentCheckIn == request.time
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['currentCheckIn']);
+    }
+
+    function gymPunchLegacyOpenToVisitCheckoutOk() {
+      let r = resource.data;
+      let d = request.resource.data;
+      let v0 = d.completedVisits[0];
+      return gymPunchVisitIdentityOkData(r)
+        && r.status == 'open'
+        && !r.keys().hasAny(['currentCheckIn'])
+        && r.checkInAt is timestamp
+        && d.subjectUid == r.subjectUid
+        && d.role == r.role
+        && d.gymPublicId == r.gymPublicId
+        && d.displayName == r.displayName
+        && d.email == r.email
+        && d.dateKey == r.dateKey
+        && d.kioskSource == r.kioskSource
+        && d.completedVisits is list
+        && d.completedVisits.size() == 1
+        && v0.keys().hasOnly(['checkInAt', 'checkOutAt', 'minutesOnSite'])
+        && v0.checkInAt == r.checkInAt
+        && v0.checkOutAt == request.time
+        && v0.minutesOnSite is number
+        && v0.minutesOnSite >= 0
+        && v0.minutesOnSite <= 2000
+        && d.currentCheckIn == null
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'completedVisits',
+          'currentCheckIn',
+          'status',
+          'checkInAt'
+        ]);
+    }
+
+    function gymPunchLegacyCompletedToVisitCheckInOk() {
+      let r = resource.data;
+      let d = request.resource.data;
+      let v0 = d.completedVisits[0];
+      return gymPunchVisitIdentityOkData(r)
+        && r.status == 'completed'
+        && !r.keys().hasAny(['currentCheckIn'])
+        && r.checkInAt is timestamp
+        && r.checkOutAt is timestamp
+        && r.minutesOnSite is number
+        && d.subjectUid == r.subjectUid
+        && d.role == r.role
+        && d.gymPublicId == r.gymPublicId
+        && d.displayName == r.displayName
+        && d.email == r.email
+        && d.dateKey == r.dateKey
+        && d.kioskSource == r.kioskSource
+        && d.completedVisits is list
+        && d.completedVisits.size() == 1
+        && v0.keys().hasOnly(['checkInAt', 'checkOutAt', 'minutesOnSite'])
+        && v0.checkInAt == r.checkInAt
+        && v0.checkOutAt == r.checkOutAt
+        && v0.minutesOnSite == r.minutesOnSite
+        && d.currentCheckIn == request.time
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'completedVisits',
+          'currentCheckIn',
+          'status',
+          'checkInAt',
+          'checkOutAt',
+          'minutesOnSite'
+        ]);
+    }
+
     function gymPunchCheckoutOk() {
       let r = resource.data;
       let d = request.resource.data;
@@ -582,8 +734,12 @@ service cloud.firestore {
       // Must allow get when the doc does not exist yet (first check-in runs a transaction.get first).
       allow get: if isAdmin()
         || sessionId.matches('^day_[A-Za-z0-9_-]{10,140}_[0-9]{4}-[0-9]{2}-[0-9]{2}$');
-      allow create: if gymPunchOpenCreatePublic(sessionId);
-      allow update: if gymPunchCheckoutOk();
+      allow create: if gymPunchOpenCreatePublic(sessionId) || gymPunchVisitOpenCreatePublic(sessionId);
+      allow update: if gymPunchCheckoutOk()
+        || gymPunchVisitCheckoutOk()
+        || gymPunchVisitCheckInOk()
+        || gymPunchLegacyOpenToVisitCheckoutOk()
+        || gymPunchLegacyCompletedToVisitCheckInOk();
       allow delete: if isAdmin();
     }
   }
