@@ -145,9 +145,32 @@ function showDashboard(user) {
     loadClasses();
 }
 
-$('btnLogout').addEventListener('click', function() {
-    auth.signOut().then(function() { window.location.href = 'login.html'; });
-});
+function doMemberLogout() {
+    auth.signOut().then(function() {
+        window.location.href = 'login.html';
+    });
+}
+
+if ($('btnLogout')) {
+    $('btnLogout').addEventListener('click', function() {
+        var modalEl = $('logoutConfirmModal');
+        if (!modalEl || typeof bootstrap === 'undefined') {
+            if (window.confirm('Are you sure you want to log out?')) doMemberLogout();
+            return;
+        }
+        bootstrap.Modal.getOrCreateInstance(modalEl).show();
+    });
+}
+if ($('btnLogoutConfirm')) {
+    $('btnLogoutConfirm').addEventListener('click', function() {
+        var modalEl = $('logoutConfirmModal');
+        if (modalEl && typeof bootstrap !== 'undefined') {
+            var inst = bootstrap.Modal.getInstance(modalEl);
+            if (inst) inst.hide();
+        }
+        doMemberLogout();
+    });
+}
 
 /* ═══════════════════════════════════════
    SIDEBAR NAVIGATION
@@ -327,7 +350,8 @@ if (btnGenerateIdCard) {
             role: 'member',
             joinDate: d.createdAt || null,
             photoURL: (d.photoURL && String(d.photoURL).trim()) || (currentUser.photoURL || '') || '',
-            userId: pid || currentUser.uid,
+            firebaseUid: currentUser.uid,
+            gymPublicId: pid,
             phone: (d.phone && String(d.phone).trim()) || '',
             membershipStatus: formatMemberIdCardMembershipStatus(d),
             gymLocation: 'RA1 2SU, 7 Krishal Road',
@@ -598,7 +622,7 @@ function syncAccountDeletionBannerAndButton() {
             p2.textContent =
                 'You may withdraw this request on the dashboard until ' +
                 formatMemberDateTimeLocal(cd) +
-                ' (about 20 hours from when you submitted). After that deadline, contact GymDD urgently if this was a mistake.';
+                ' (about 20 hours from when you submitted). After that deadline, contact DaDaGym urgently if this was a mistake.';
             body.appendChild(p2);
         }
         var de = rd.deletionEligibleAfterAt;
@@ -615,7 +639,7 @@ function syncAccountDeletionBannerAndButton() {
         var pq = document.createElement('p');
         pq.className = 'mb-0';
         pq.textContent =
-            'You requested a temporary removal. Staff may deactivate or restrict your access; contact GymDD if you need the account reopened.';
+            'You requested a temporary removal. Staff may deactivate or restrict your access; contact DaDaGym if you need the account reopened.';
         body.appendChild(pq);
     }
 
@@ -673,7 +697,7 @@ function openAccountDeletionConfirmForType(t) {
         if (title) title.textContent = 'Temporary account removal';
         if (explained) {
             explained.innerHTML =
-                '<p class="mb-0">You are asking GymDD staff to deactivate or temporarily close access. Recovery may be possible later by contacting GymDD.</p>';
+                '<p class="mb-0">You are asking DaDaGym staff to deactivate or temporarily close access. Recovery may be possible later by contacting DaDaGym.</p>';
         }
     }
     if (cm) cm.show();
@@ -1293,7 +1317,7 @@ if ($('btnWithdrawAccountDeletion')) {
         if ((rd.requestType || '') === 'permanent' && !canWithdrawAccountDeletion(rd)) {
             showAlert(
                 $('membershipAlert'),
-                'The cancellation window has passed for this permanent request. Please contact GymDD staff.',
+                'The cancellation window has passed for this permanent request. Please contact DaDaGym staff.',
                 'warning'
             );
             return;
@@ -1374,6 +1398,11 @@ function nextOccurrenceOfWeekday(jsWeekday) {
     return d;
 }
 
+/** Doc id: `{classId}_{YYYY-MM-DD}` — per-occurrence enrollment (recurring weekly classes). */
+function classSessionEnrolledDocId(classId, dateIso) {
+    return String(classId || '').trim() + '_' + String(dateIso || '').trim();
+}
+
 /** Random 5-digit reference shown to members (10000–99999). */
 function generateBookingCode() {
     return Math.floor(10000 + Math.random() * 90000);
@@ -1423,80 +1452,22 @@ function validateBookDateWeekday() {
 /* ═══════════════════════════════════════
    CLASSES
    ═══════════════════════════════════════ */
-function memberClassRequestDocId(classId) {
-    return currentUid + '_' + classId;
-}
-
-function submitMemberClassRequest(classId, className, trainerId, trainerName) {
-    if (!currentUid || !classId || !trainerId) return;
-    var rid = memberClassRequestDocId(classId);
-    db.collection('memberClassRequests').doc(rid).get().then(function(doc) {
-        if (doc.exists) {
-            var st = doc.data().status || 'pending';
-            if (st === 'pending') {
-                alert('You already have a pending request for this class.');
-                return null;
-            }
-            if (st === 'approved') {
-                alert('This trainer has already approved your request.');
-                return null;
-            }
-        }
-        return db.collection('memberClassRequests').doc(rid).set({
-            memberId: currentUid,
-            memberName: (memberData && memberData.displayName) ? memberData.displayName.trim() : (currentUser && currentUser.email),
-            memberEmail: (currentUser && currentUser.email) || '',
-            classId: classId,
-            className: className || '',
-            trainerId: trainerId,
-            trainerName: trainerName || '',
-            status: 'pending',
-            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-        });
-    }).then(function(res) {
-        if (res === null) return;
-        alert('Request sent to your trainer.');
-        loadClasses();
-    }).catch(function(err) {
-        if (err) alert(err.message || 'Could not send request.');
-    });
-}
-
 function loadClasses() {
     var grid = $('classesGrid');
     if (!grid) return;
     grid.innerHTML = '<div class="col-12 text-center text-muted py-4">Loading classes…</div>';
 
-    var reqByClassId = {};
-
-    var reqPromise = db.collection('memberClassRequests').where('memberId', '==', currentUid).get()
-        .catch(function(err) {
-            console.warn('memberClassRequests (trainer-request badges skipped):', err);
-            return null;
-        });
-
     Promise.all([
         db.collection('members').doc(currentUid).get(),
         db.collection('classes').get(),
-        db.collection('bookings').where('memberId', '==', currentUid).get(),
-        reqPromise
+        db.collection('bookings').where('memberId', '==', currentUid).get()
     ])
         .then(function(parts) {
             var mdoc = parts[0];
             var classSnap = parts[1];
             var bookSnap = parts[2];
-            var reqSnap = parts[3];
 
             if (mdoc && mdoc.exists) memberData = mdoc.data();
-
-            if (reqSnap && typeof reqSnap.forEach === 'function') {
-                reqSnap.forEach(function(rd) {
-                    var x = rd.data();
-                    if (!x.classId) return;
-                    reqByClassId[x.classId] = x.status || 'pending';
-                });
-            }
 
             var gate = evaluateClassBookingGate(memberData || {}, bookSnap);
 
@@ -1512,77 +1483,69 @@ function loadClasses() {
                 grid.innerHTML = '<div class="col-12 text-center text-muted py-4">No classes available yet</div>';
                 return;
             }
-            docs.forEach(function(doc) {
-                var c = doc.data();
-                var spots = (c.capacity || 0) - (c.enrolled || 0);
-                var dayTxt = (c.schedule && c.schedule.day) ? c.schedule.day : '—';
-                var timeTxt = (c.schedule && c.schedule.time) ? c.schedule.time : '—';
-                var durTxt = (c.schedule && c.schedule.duration) ? String(c.schedule.duration) + ' min' : '';
-                var metaSchedule = escapeHtml(dayTxt) + ' · ' + escapeHtml(timeTxt) +
-                    (durTxt ? ' · ' + escapeHtml(durTxt) : '');
-                var trainerSpots = escapeHtml(c.trainerName || 'TBA') + ' · ' + spots + '/' + (c.capacity || 0);
+            var sessionPromises = docs.map(function(clDoc) {
+                var c = clDoc.data();
+                var wd = scheduleDayToJsWeekday((c.schedule && c.schedule.day) ? String(c.schedule.day) : '');
+                if (wd === null) {
+                    return Promise.resolve({ docId: clDoc.id, useSession: false, sessionEnr: 0 });
+                }
+                var occDate = formatYYYYMMDDLocal(nextOccurrenceOfWeekday(wd));
+                var sref = db.collection('classSessionEnrolled').doc(classSessionEnrolledDocId(clDoc.id, occDate));
+                return sref.get().then(function(snap) {
+                    var se = snap.exists ? (snap.data().enrolled != null ? snap.data().enrolled : 0) : 0;
+                    return { docId: clDoc.id, useSession: true, sessionEnr: se };
+                });
+            });
+            return Promise.all(sessionPromises).then(function(sessionRows) {
+                var sessionByClass = {};
+                sessionRows.forEach(function(row) {
+                    sessionByClass[row.docId] = row;
+                });
+                docs.forEach(function(doc) {
+                    var c = doc.data();
+                    var cap = c.capacity || 0;
+                    var row = sessionByClass[doc.id];
+                    var enrolled = (row && row.useSession) ? row.sessionEnr : (c.enrolled || 0);
+                    var spots = cap - enrolled;
+                    var dayTxt = (c.schedule && c.schedule.day) ? c.schedule.day : '—';
+                    var timeTxt = (c.schedule && c.schedule.time) ? c.schedule.time : '—';
+                    var durTxt = (c.schedule && c.schedule.duration) ? String(c.schedule.duration) + ' min' : '';
+                    var metaSchedule = escapeHtml(dayTxt) + ' · ' + escapeHtml(timeTxt) +
+                        (durTxt ? ' · ' + escapeHtml(durTxt) : '');
+                    var trainerSpots = escapeHtml(c.trainerName || 'TBA') + ' · ' + spots + '/' + (c.capacity || 0);
 
-                var tid = (c.trainerId || '').trim();
-                var reqSt = reqByClassId[doc.id];
-                var askHtml = '';
-                if (tid) {
-                    if (reqSt === 'pending') {
-                        askHtml =
-                            '<div class="small text-warning mt-2"><i class="fas fa-clock me-1"></i>Trainer approval pending</div>';
-                    } else if (reqSt === 'approved') {
-                        askHtml =
-                            '<div class="small text-success mt-2"><i class="fas fa-check me-1"></i>Trainer approved</div>';
-                    } else if (reqSt === 'rejected') {
-                        askHtml =
-                            '<button type="button" class="btn btn-outline-warning btn-sm w-100 mt-2 member-ask-trainer-btn"' +
-                            ' data-class-id="' + escapeHtml(doc.id) + '"' +
-                            ' data-class-name="' + escapeHtml(c.name || '') + '"' +
-                            ' data-trainer-id="' + escapeHtml(tid) + '"' +
-                            ' data-trainer-name="' + escapeHtml(c.trainerName || '') + '">' +
-                            '<i class="fas fa-redo me-1"></i>Ask again</button>';
+                    var bookRow = '';
+                    if (spots <= 0) {
+                        bookRow = '<button type="button" class="btn btn-secondary btn-sm w-100 mt-2" disabled>Full</button>';
+                    } else if (gate.ok) {
+                        bookRow =
+                            '<button type="button" class="btn btn-primary btn-sm w-100 mt-2" onclick="openBookModal(\'' +
+                            escapeJsString(doc.id) + '\',\'' + escapeJsString(c.name || '') + '\',\'' +
+                            escapeJsString(c.trainerName || '') + '\',\'' + escapeJsString(c.trainerId || '') + '\',\'' +
+                            escapeJsString((c.schedule && c.schedule.time) ? c.schedule.time : '') + '\',\'' +
+                            escapeJsString((c.schedule && c.schedule.day) ? String(c.schedule.day) : '') + '\')">Book Now</button>';
                     } else {
-                        askHtml =
-                            '<button type="button" class="btn btn-outline-light btn-sm w-100 mt-2 member-ask-trainer-btn"' +
-                            ' data-class-id="' + escapeHtml(doc.id) + '"' +
-                            ' data-class-name="' + escapeHtml(c.name || '') + '"' +
-                            ' data-trainer-id="' + escapeHtml(tid) + '"' +
-                            ' data-trainer-name="' + escapeHtml(c.trainerName || '') + '">' +
-                            '<i class="fas fa-user-check me-1"></i>Ask trainer</button>';
+                        bookRow =
+                            '<button type="button" class="btn btn-secondary btn-sm w-100 mt-2" disabled title="' +
+                            escapeHtml(gate.reason).replace(/"/g, '&quot;') + '">Book Now</button>' +
+                            '<div class="small text-warning mt-2">' + escapeHtml(gate.reason) + '</div>';
                     }
-                }
 
-                var bookRow = '';
-                if (spots <= 0) {
-                    bookRow = '<button type="button" class="btn btn-secondary btn-sm w-100 mt-2" disabled>Full</button>';
-                } else if (gate.ok) {
-                    bookRow =
-                        '<button type="button" class="btn btn-primary btn-sm w-100 mt-2" onclick="openBookModal(\'' +
-                        escapeJsString(doc.id) + '\',\'' + escapeJsString(c.name || '') + '\',\'' +
-                        escapeJsString(c.trainerName || '') + '\',\'' + escapeJsString(c.trainerId || '') + '\',\'' +
-                        escapeJsString((c.schedule && c.schedule.time) ? c.schedule.time : '') + '\',\'' +
-                        escapeJsString((c.schedule && c.schedule.day) ? String(c.schedule.day) : '') + '\')">Book Now</button>';
-                } else {
-                    bookRow =
-                        '<button type="button" class="btn btn-secondary btn-sm w-100 mt-2" disabled title="' +
-                        escapeHtml(gate.reason).replace(/"/g, '&quot;') + '">Book Now</button>' +
-                        '<div class="small text-warning mt-2">' + escapeHtml(gate.reason) + '</div>';
-                }
-
-                var col = document.createElement('div');
-                col.className = 'col-6 col-sm-4 col-md-3 col-lg-2';
-                col.innerHTML =
-                    '<div class="dash-card h-100 class-card-member">' +
-                        '<div class="card-body text-center">' +
+                    var col = document.createElement('div');
+                    col.className = 'col-6 col-sm-4 col-md-3 col-lg-2';
+                    col.innerHTML =
+                        '<div class="dash-card h-100 class-card-member">' +
+                            '<div class="card-body text-center">' +
                             '<div class="class-avatar"><i class="fas fa-dumbbell"></i></div>' +
                             '<h6 class="text-white fw-bold mt-2 mb-1">' + escapeHtml(c.name || 'Untitled') + '</h6>' +
                             '<span class="badge bg-info">' + escapeHtml(c.type || 'General') + '</span>' +
                             '<div class="member-meta small mt-1">' + metaSchedule + '</div>' +
                             '<div class="member-meta small">' + trainerSpots + '</div>' +
-                            askHtml +
                             bookRow +
-                        '</div>' +
-                    '</div>';
-                grid.appendChild(col);
+                            '</div>' +
+                        '</div>';
+                    grid.appendChild(col);
+                });
             });
         })
         .catch(function(err) {
@@ -1593,20 +1556,6 @@ function loadClasses() {
 
 if ($('btnRefreshClasses')) {
     $('btnRefreshClasses').addEventListener('click', loadClasses);
-}
-
-if ($('classesGrid')) {
-    $('classesGrid').addEventListener('click', function(e) {
-        var btn = e.target.closest('.member-ask-trainer-btn');
-        if (!btn || !btn.getAttribute('data-class-id')) return;
-        e.preventDefault();
-        submitMemberClassRequest(
-            btn.getAttribute('data-class-id'),
-            btn.getAttribute('data-class-name') || '',
-            btn.getAttribute('data-trainer-id') || '',
-            btn.getAttribute('data-trainer-name') || ''
-        );
-    });
 }
 
 window.openBookModal = function(classId, className, trainerName, trainerId, time, scheduleDay) {
@@ -1638,22 +1587,16 @@ window.openBookModal = function(classId, className, trainerName, trainerId, time
 
     var note = $('bookDateWeekdayNote');
     if (note) {
-        note.textContent = wd !== null ? ('Pick any upcoming ' + JS_WEEKDAY_LABELS[wd] + '.') : '';
+        note.textContent = wd !== null
+            ? ('Choose a date (required). The class meets on ' + JS_WEEKDAY_LABELS[wd] + ' — any future occurrence is allowed.')
+            : 'Choose a date (required).';
     }
 
     var todayLocal = formatYYYYMMDDLocal(new Date());
     var bd = $('bookDate');
     if (bd) {
         bd.min = todayLocal;
-        if (wd !== null) {
-            bd.value = formatYYYYMMDDLocal(nextOccurrenceOfWeekday(wd));
-            if (bd.value < todayLocal) bd.value = todayLocal;
-            if (getJsWeekdayFromISODate(bd.value) !== wd) {
-                bd.value = formatYYYYMMDDLocal(nextOccurrenceOfWeekday(wd));
-            }
-        } else {
-            bd.value = '';
-        }
+        bd.value = '';
     }
 
     var fb = $('bookDateFeedback');
@@ -1786,6 +1729,8 @@ $('btnConfirmBook').addEventListener('click', function() {
                 createdAt: firebase.firestore.FieldValue.serverTimestamp()
             };
 
+            var sessionRef = db.collection('classSessionEnrolled').doc(classSessionEnrolledDocId(classId, date));
+
             return db.runTransaction(function(transaction) {
                 var ref = db.collection('bookings').doc(slotId);
                 var classRef = db.collection('classes').doc(classId);
@@ -1800,22 +1745,34 @@ $('btnConfirmBook').addEventListener('click', function() {
                         }
                         var cd = classSnap.data();
                         var cap = cd.capacity != null ? cd.capacity : 0;
-                        var enr = cd.enrolled != null ? cd.enrolled : 0;
-                        if (cap > 0 && enr >= cap) throw classFullErr();
+                        return transaction.get(sessionRef).then(function(sessionSnap) {
+                            var sessionEnr = sessionSnap.exists
+                                ? (sessionSnap.data().enrolled != null ? sessionSnap.data().enrolled : 0)
+                                : 0;
+                            if (cap > 0 && sessionEnr >= cap) throw classFullErr();
 
-                        transaction.set(ref, booking);
-                        transaction.update(classRef, {
-                            enrolled: firebase.firestore.FieldValue.increment(1)
-                        });
-                        var lookupRef = db.collection('bookingLookups').doc(String(bookingCode));
-                        transaction.set(lookupRef, {
-                            bookingId: slotId,
-                            memberId: currentUid,
-                            trainerId: ds.trainerId || '',
-                            trainerName: ds.trainerName || '',
-                            className: ds.className || '',
-                            date: date,
-                            time: timeRaw
+                            transaction.set(ref, booking);
+                            if (!sessionSnap.exists) {
+                                transaction.set(sessionRef, {
+                                    classId: classId,
+                                    date: date,
+                                    enrolled: 1
+                                });
+                            } else {
+                                transaction.update(sessionRef, {
+                                    enrolled: firebase.firestore.FieldValue.increment(1)
+                                });
+                            }
+                            var lookupRef = db.collection('bookingLookups').doc(String(bookingCode));
+                            transaction.set(lookupRef, {
+                                bookingId: slotId,
+                                memberId: currentUid,
+                                trainerId: ds.trainerId || '',
+                                trainerName: ds.trainerName || '',
+                                className: ds.className || '',
+                                date: date,
+                                time: timeRaw
+                            });
                         });
                     });
                 });
@@ -2134,6 +2091,8 @@ if (btnOpenBookSession) {
         tbsDate.min = today;
         tbsDate.value = '';
         if (tbsTime) tbsTime.value = '';
+        var tbsDur = $('tbsDuration');
+        if (tbsDur) tbsDur.value = '60';
         if (tbsReason) tbsReason.value = '';
         if (tbsAlert) {
             tbsAlert.classList.add('d-none');
@@ -2163,12 +2122,22 @@ if (btnSubmitSessionRequest) {
         var tbsAlert = $('tbsAlert');
         var date = dateEl ? dateEl.value : '';
         var time = timeEl ? timeEl.value : '';
+        var durEl = $('tbsDuration');
+        var durationMin = durEl ? parseInt(durEl.value, 10) : NaN;
         var reason = reasonEl ? String(reasonEl.value || '').trim() : '';
 
         if (!tid || !date || !time || !reason) {
             if (tbsAlert) {
                 tbsAlert.className = 'alert alert-danger py-2 small';
                 tbsAlert.textContent = 'Please fill in date, time, and why you want this session.';
+                tbsAlert.classList.remove('d-none');
+            }
+            return;
+        }
+        if (isNaN(durationMin) || durationMin < 15 || durationMin > 300) {
+            if (tbsAlert) {
+                tbsAlert.className = 'alert alert-danger py-2 small';
+                tbsAlert.textContent = 'Please choose a duration between 15 and 300 minutes.';
                 tbsAlert.classList.remove('d-none');
             }
             return;
@@ -2183,6 +2152,7 @@ if (btnSubmitSessionRequest) {
             trainerName: currentTrainerDetailName,
             preferredDate: date,
             preferredTime: time,
+            preferredDurationMinutes: durationMin,
             reason: reason,
             status: 'pending',
             createdAt: firebase.firestore.FieldValue.serverTimestamp()
@@ -2291,9 +2261,17 @@ function loadBookings() {
                         '" title="Remove from your list"><i class="fas fa-trash-alt me-1"></i>Delete</button>';
                 }
 
+                var classCell = escapeHtml(b.className || '—');
+                if (b.durationMinutes != null && !isNaN(Number(b.durationMinutes))) {
+                    classCell +=
+                        ' <span class="text-muted small">(' +
+                        escapeHtml(String(b.durationMinutes)) +
+                        ' min)</span>';
+                }
+
                 tr.innerHTML =
                     '<td class="fw-semibold">' + refDisplay + '</td>' +
-                    '<td>' + escapeHtml(b.className || '—') + '</td>' +
+                    '<td>' + classCell + '</td>' +
                     '<td>' + escapeHtml(b.trainerName || '—') + '</td>' +
                     '<td class="booking-when">' + formatBookingWhenCellHtml(b.date, b.time) + '</td>' +
                     '<td><span class="badge bg-' + (statusColors[b.status] || 'secondary') + '">' + escapeHtml(b.status || '—') + '</span></td>' +
@@ -2327,16 +2305,20 @@ window.cancelBooking = function(bookingId, meta) {
                 return;
             }
             var cref = db.collection('classes').doc(cid);
-            return transaction.get(cref).then(function(csnap) {
-                transaction.update(bref, { status: 'cancelled' });
-                if (csnap.exists) {
-                    var curEnr = csnap.data().enrolled != null ? csnap.data().enrolled : 0;
-                    if (curEnr > 0) {
-                        transaction.update(cref, {
-                            enrolled: firebase.firestore.FieldValue.increment(-1)
-                        });
+            var bdate = (b.date || '').trim();
+            var sref = db.collection('classSessionEnrolled').doc(classSessionEnrolledDocId(cid, bdate));
+            return transaction.get(cref).then(function() {
+                return transaction.get(sref).then(function(ssnap) {
+                    transaction.update(bref, { status: 'cancelled' });
+                    if (ssnap.exists) {
+                        var se = ssnap.data().enrolled != null ? ssnap.data().enrolled : 0;
+                        if (se > 0) {
+                            transaction.update(sref, {
+                                enrolled: firebase.firestore.FieldValue.increment(-1)
+                            });
+                        }
                     }
-                }
+                });
             });
         });
     })

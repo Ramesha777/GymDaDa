@@ -193,8 +193,16 @@ function setUserPill(user) {
     pill.hidden = false;
 }
 
-$('payLogoutBtn').addEventListener('click', function() { auth.signOut(); });
-$('blockedLogoutBtn').addEventListener('click', function() { auth.signOut(); });
+function doPaymentLogout() {
+    auth.signOut();
+}
+
+$('payLogoutBtn').addEventListener('click', function() {
+    if (window.confirm('Are you sure you want to log out?')) doPaymentLogout();
+});
+$('blockedLogoutBtn').addEventListener('click', function() {
+    if (window.confirm('Are you sure you want to log out?')) doPaymentLogout();
+});
 
 /* ═══════════════════════════════════════
    CHECKOUT INIT (UI handlers — auth-independent)

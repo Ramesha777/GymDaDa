@@ -120,7 +120,7 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
   color:#fff!important;
   box-shadow:0 0 0 2px rgba(6,182,212,.65);
 }
-/* Refund owing — GymDD orange */
+/* Refund owing — DaDaGym orange */
 .memb-stat-refundAmt .memb-payout-btn{
   background:linear-gradient(180deg,#ff7a45,#ea580c);
   border-color:rgba(254,215,170,.45);

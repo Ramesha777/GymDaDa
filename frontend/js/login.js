@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════
-   GymDD — Login / register → dashboard redirect
+   DaDaGym — Login / register → dashboard redirect
    ═══════════════════════════════════════ */
 
 import { firebaseConfig } from './firebase-config.js';
@@ -22,16 +22,32 @@ var btnLogout  = $('btnLogout');
 var loginForm      = $('loginForm');
 var registerForm   = $('registerForm');
 var trainerRegForm = $('trainerRegForm');
-var loginTab       = $('loginTab');
-var registerTab    = $('registerTab');
-var trainerRegTab  = $('trainerRegTab');
 var authAlert      = $('authAlert');
+
+var loginPhase           = $('loginPhase');
+var registerChoicePhase   = $('registerChoicePhase');
+var registerCtaWrap       = $('registerCtaWrap');
+var authTitle             = $('authTitle');
+var authSubtitle          = $('authSubtitle');
+var btnOpenRegisterChoices = $('btnOpenRegisterChoices');
+var btnRegChoiceMember    = $('btnRegChoiceMember');
+var btnRegChoiceTrainer   = $('btnRegChoiceTrainer');
+var btnBackToSignInFromChoice = $('btnBackToSignInFromChoice');
+var btnBackFromMemberReg  = $('btnBackFromMemberReg');
+var btnBackFromTrainerReg = $('btnBackFromTrainerReg');
 
 var BOOK_LOGIN_HINT =
     'To book a lesson or class session, sign in to your member account (or register as a member). You can book from your dashboard after logging in.';
 
-var allAuthForms = [loginForm, registerForm, trainerRegForm].filter(Boolean);
-var allAuthTabs  = [loginTab, registerTab, trainerRegTab].filter(Boolean);
+var TITLE_LOGIN         = 'User login';
+var TITLE_REGISTER_MENU = 'Create an account';
+var TITLE_MEMBER_REG    = 'Register as Member';
+var TITLE_TRAINER_REG   = 'Register as Trainer';
+
+var SUB_LOGIN          = 'Sign in to access your dashboard';
+var SUB_REGISTER_MENU  = 'Choose how you\'d like to register';
+var SUB_MEMBER_REG     = 'Enter your details to get started';
+var SUB_TRAINER_REG    = 'Submit your profile for admin approval';
 
 function setPostAuthPanels(showRedirect, showVerify, showTrainerPending) {
     if (redirectPanel) redirectPanel.classList.toggle('d-none', !showRedirect);
@@ -39,29 +55,79 @@ function setPostAuthPanels(showRedirect, showVerify, showTrainerPending) {
     if (trainerPendingPanel) trainerPendingPanel.classList.toggle('d-none', !showTrainerPending);
 }
 
-function switchAuthTab(activeTab, activeForm) {
-    if (!activeTab || !activeForm || !authAlert) return;
-    allAuthTabs.forEach(function(t) { t.classList.remove('active'); });
-    allAuthForms.forEach(function(f) { f.classList.add('d-none'); });
-    activeTab.classList.add('active');
-    activeForm.classList.remove('d-none');
-    authAlert.classList.add('d-none');
+function setAuthHeader(title, subtitle) {
+    if (authTitle && title) authTitle.textContent = title;
+    if (authSubtitle) authSubtitle.textContent = subtitle || '';
 }
 
-if (loginTab && loginForm) {
-    loginTab.addEventListener('click', function() { switchAuthTab(loginTab, loginForm); });
-}
-if (registerTab && registerForm) {
-    registerTab.addEventListener('click', function() { switchAuthTab(registerTab, registerForm); });
-}
-if (trainerRegTab && trainerRegForm) {
-    trainerRegTab.addEventListener('click', function() { switchAuthTab(trainerRegTab, trainerRegForm); });
+function hideForgotRestoreLogin() {
+    var forgotPassBox = $('forgotPassBox');
+    if (forgotPassBox) forgotPassBox.classList.add('d-none');
+    if (loginForm) loginForm.classList.remove('d-none');
 }
 
-if (window.location.hash === '#register' && registerTab && registerForm) {
-    switchAuthTab(registerTab, registerForm);
-} else if (window.location.hash === '#trainer' && trainerRegTab && trainerRegForm) {
-    switchAuthTab(trainerRegTab, trainerRegForm);
+function showLoginPhaseOnly() {
+    hideForgotRestoreLogin();
+    if (loginPhase) loginPhase.classList.remove('d-none');
+    if (registerChoicePhase) registerChoicePhase.classList.add('d-none');
+    if (registerForm) registerForm.classList.add('d-none');
+    if (trainerRegForm) trainerRegForm.classList.add('d-none');
+    if (registerCtaWrap) registerCtaWrap.classList.remove('d-none');
+    if (authAlert) authAlert.classList.add('d-none');
+    setAuthHeader(TITLE_LOGIN, SUB_LOGIN);
+}
+
+function showRegisterChoicePhase() {
+    hideForgotRestoreLogin();
+    if (loginPhase) loginPhase.classList.add('d-none');
+    if (registerChoicePhase) registerChoicePhase.classList.remove('d-none');
+    if (registerForm) registerForm.classList.add('d-none');
+    if (trainerRegForm) trainerRegForm.classList.add('d-none');
+    if (authAlert) authAlert.classList.add('d-none');
+    setAuthHeader(TITLE_REGISTER_MENU, SUB_REGISTER_MENU);
+}
+
+function showMemberRegisterForm() {
+    if (loginPhase) loginPhase.classList.add('d-none');
+    if (registerChoicePhase) registerChoicePhase.classList.add('d-none');
+    if (registerForm) registerForm.classList.remove('d-none');
+    if (trainerRegForm) trainerRegForm.classList.add('d-none');
+    if (authAlert) authAlert.classList.add('d-none');
+    setAuthHeader(TITLE_MEMBER_REG, SUB_MEMBER_REG);
+}
+
+function showTrainerRegisterForm() {
+    if (loginPhase) loginPhase.classList.add('d-none');
+    if (registerChoicePhase) registerChoicePhase.classList.add('d-none');
+    if (registerForm) registerForm.classList.add('d-none');
+    if (trainerRegForm) trainerRegForm.classList.remove('d-none');
+    if (authAlert) authAlert.classList.add('d-none');
+    setAuthHeader(TITLE_TRAINER_REG, SUB_TRAINER_REG);
+}
+
+if (btnOpenRegisterChoices) {
+    btnOpenRegisterChoices.addEventListener('click', function() { showRegisterChoicePhase(); });
+}
+if (btnRegChoiceMember) {
+    btnRegChoiceMember.addEventListener('click', function() { showMemberRegisterForm(); });
+}
+if (btnRegChoiceTrainer) {
+    btnRegChoiceTrainer.addEventListener('click', function() { showTrainerRegisterForm(); });
+}
+if (btnBackToSignInFromChoice) {
+    btnBackToSignInFromChoice.addEventListener('click', function() { showLoginPhaseOnly(); });
+}
+if (btnBackFromMemberReg) {
+    btnBackFromMemberReg.addEventListener('click', function() { showRegisterChoicePhase(); });
+}
+if (btnBackFromTrainerReg) {
+    btnBackFromTrainerReg.addEventListener('click', function() { showRegisterChoicePhase(); });
+}
+
+if (window.location.hash === '#register') {
+    showRegisterChoicePhase();
+} else if (window.location.hash === '#trainer') {
+    showTrainerRegisterForm();
 }
 
 function showAlert(el, msg, type) {
@@ -123,7 +189,9 @@ if (registerForm) {
                     phone: phone,
                     plan: 'Basic',
                     createdAt: firebase.firestore.FieldValue.serverTimestamp()
-                }).then(function() { return cred.user.sendEmailVerification(); });
+                }).then(function() { return cred.user.sendEmailVerification(); }).then(function() {
+                    if (authAlert) authAlert.classList.add('d-none');
+                });
             })
             .catch(function(err) { showAlert(authAlert, err.message, 'danger'); });
     });
@@ -164,7 +232,9 @@ if (trainerRegForm) {
                     bio: bio,
                     approvalStatus: 'pending',
                     createdAt: firebase.firestore.FieldValue.serverTimestamp()
-                }).then(function() { return cred.user.sendEmailVerification(); });
+                }).then(function() { return cred.user.sendEmailVerification(); }).then(function() {
+                    if (authAlert) authAlert.classList.add('d-none');
+                });
             })
             .catch(function(err) { showAlert(authAlert, err.message, 'danger'); });
     });
@@ -182,6 +252,7 @@ if (forgotPassLink && loginForm && forgotPassBox) {
         e.preventDefault();
         loginForm.classList.add('d-none');
         forgotPassBox.classList.remove('d-none');
+        if (registerCtaWrap) registerCtaWrap.classList.add('d-none');
         if (resetAlert) resetAlert.classList.add('d-none');
     });
 }
@@ -190,6 +261,7 @@ if (backToLogin && loginForm && forgotPassBox) {
         e.preventDefault();
         forgotPassBox.classList.add('d-none');
         loginForm.classList.remove('d-none');
+        if (registerCtaWrap) registerCtaWrap.classList.remove('d-none');
     });
 }
 if (btnSendReset) {
@@ -218,12 +290,32 @@ if (btnResendVerify) {
     btnResendVerify.addEventListener('click', function() {
         var u = auth.currentUser;
         if (!u) return;
-        u.sendEmailVerification()
+        u.reload()
             .then(function() {
+                var cur = auth.currentUser;
+                if (!cur) throw new Error('Session expired — sign in again.');
+                if (cur.emailVerified) {
+                    if (verifyAlert) showAlert(verifyAlert, 'Email already verified. Continuing…', 'success');
+                    routeAfterLogin(cur);
+                    return null;
+                }
+                return cur.sendEmailVerification();
+            })
+            .then(function(v) {
+                if (v === null) return;
                 if (verifyAlert) showAlert(verifyAlert, 'Verification email sent.', 'success');
             })
             .catch(function(err) {
-                if (verifyAlert) showAlert(verifyAlert, err.message, 'danger');
+                var code = err && err.code;
+                if (verifyAlert && code === 'auth/too-many-requests') {
+                    showAlert(
+                        verifyAlert,
+                        'Firebase rate-limited the send request, but your mail may already be on its way — check inbox and spam, then tap "I\'ve Verified".',
+                        'warning'
+                    );
+                    return;
+                }
+                if (verifyAlert) showAlert(verifyAlert, err && err.message ? err.message : 'Could not send email.', 'danger');
             });
     });
 }
@@ -331,6 +423,21 @@ auth.onAuthStateChanged(function(user) {
 
 if (btnLogout) {
     btnLogout.addEventListener('click', function() {
+        var modalEl = $('logoutConfirmModal');
+        if (!modalEl || typeof bootstrap === 'undefined') {
+            if (window.confirm('Are you sure you want to log out?')) auth.signOut();
+            return;
+        }
+        bootstrap.Modal.getOrCreateInstance(modalEl).show();
+    });
+}
+if ($('btnLogoutConfirm')) {
+    $('btnLogoutConfirm').addEventListener('click', function() {
+        var modalEl = $('logoutConfirmModal');
+        if (modalEl && typeof bootstrap !== 'undefined') {
+            var inst = bootstrap.Modal.getInstance(modalEl);
+            if (inst) inst.hide();
+        }
         auth.signOut();
     });
 }

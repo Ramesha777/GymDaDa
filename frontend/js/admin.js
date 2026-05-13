@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════
-   GymDD — Admin dashboard (card-grid + modals)
+   DaDaGym — Admin dashboard (card-grid + modals)
    ═══════════════════════════════════════ */
 
 import { firebaseConfig } from './firebase-config.js';
@@ -244,9 +244,30 @@ auth.onAuthStateChanged(function(user) {
     });
 });
 
+function doAdminLogout() {
+    auth.signOut().then(function() {
+        window.location.href = 'login.html';
+    });
+}
+
 if ($('btnLogout')) {
     $('btnLogout').addEventListener('click', function() {
-        auth.signOut().then(function() { window.location.href = 'login.html'; });
+        var modalEl = $('logoutConfirmModal');
+        if (!modalEl || typeof bootstrap === 'undefined') {
+            if (window.confirm('Are you sure you want to log out?')) doAdminLogout();
+            return;
+        }
+        bootstrap.Modal.getOrCreateInstance(modalEl).show();
+    });
+}
+if ($('btnLogoutConfirm')) {
+    $('btnLogoutConfirm').addEventListener('click', function() {
+        var modalEl = $('logoutConfirmModal');
+        if (modalEl && typeof bootstrap !== 'undefined') {
+            var inst = bootstrap.Modal.getInstance(modalEl);
+            if (inst) inst.hide();
+        }
+        doAdminLogout();
     });
 }
 
@@ -274,7 +295,8 @@ if ($('btnGenerateAdminIdCard')) {
                         (ud.photoURL && String(ud.photoURL).trim()) ||
                         (currentUser.photoURL || '') ||
                         '',
-                    userId: pid || currentUser.uid,
+                    firebaseUid: currentUser.uid,
+                    gymPublicId: pid,
                     phone: (ud.phone && String(ud.phone).trim()) || '',
                     gymLocation: 'RA1 2SU, 7 Krishal Road',
                     gymWebsiteUrl: 'https://dadagym.netlify.app',
@@ -287,7 +309,7 @@ if ($('btnGenerateAdminIdCard')) {
                     role: 'admin',
                     joinDate: null,
                     photoURL: currentUser.photoURL || '',
-                    userId: currentUser.uid,
+                    firebaseUid: currentUser.uid,
                     phone: '',
                     gymLocation: 'RA1 2SU, 7 Krishal Road',
                     gymWebsiteUrl: 'https://dadagym.netlify.app',
@@ -1001,7 +1023,7 @@ function loadOverviewAccountDeletionRequests() {
 function loadOverviewClassTrainerRequests() {
     var tbody = $('overviewClassRequestsBody');
     if (!tbody) return;
-    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">Loading…</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">Loading…</td></tr>';
 
     db.collection('trainerClassRequests').where('status', '==', 'pending').get()
         .then(function(snap) {
@@ -1019,7 +1041,7 @@ function loadOverviewClassTrainerRequests() {
 
             tbody.innerHTML = '';
             if (!rows.length) {
-                tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">No pending trainer class requests</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">No pending trainer class requests</td></tr>';
                 return;
             }
 
@@ -1064,8 +1086,22 @@ function loadOverviewClassTrainerRequests() {
                 tdDt.className = 'small';
                 tdDt.textContent = dateStr;
 
+                var tdTime = document.createElement('td');
+                tdTime.className = 'small';
+                tdTime.textContent = d.proposedTime != null && String(d.proposedTime).trim()
+                    ? String(d.proposedTime).trim()
+                    : '—';
+                var tdDur = document.createElement('td');
+                tdDur.className = 'small';
+                tdDur.textContent =
+                    d.proposedDurationMinutes != null && !isNaN(Number(d.proposedDurationMinutes))
+                        ? String(d.proposedDurationMinutes) + ' min'
+                        : '—';
+
                 tr.appendChild(tdClass);
                 tr.appendChild(tdType);
+                tr.appendChild(tdTime);
+                tr.appendChild(tdDur);
                 tr.appendChild(tdTn);
                 tr.appendChild(tdEm);
                 tr.appendChild(tdDt);
@@ -1075,7 +1111,7 @@ function loadOverviewClassTrainerRequests() {
             });
         })
         .catch(function() {
-            tbody.innerHTML = '<tr><td colspan="6" class="text-center text-danger">Could not load class requests.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="8" class="text-center text-danger">Could not load class requests.</td></tr>';
         });
 }
 
@@ -2305,8 +2341,13 @@ function adminResolveBooking(refRaw) {
             }
             var num = parseInt(codeKey, 10);
             if (isNaN(num)) {
-                adminCheckinSetResult('<p class="text-warning small mb-0">No booking found for this reference.</p>');
-                return null;
+                return db.collection('bookings').doc(codeKey).get().then(function(bsnap) {
+                    if (bsnap.exists) {
+                        adminRenderBookingDetail(bsnap.id, bsnap.data());
+                        return;
+                    }
+                    adminCheckinSetResult('<p class="text-warning small mb-0">No booking found for this reference.</p>');
+                });
             }
             return db.collection('bookings').where('bookingCode', '==', num).limit(1).get()
                 .then(function(q) {
@@ -2910,7 +2951,8 @@ function fetchPunchAttendanceCache(forceReload) {
     }
     return db
         .collection('gymPunchSessions')
-        .orderBy('checkInAt', 'desc')
+        /** New kiosk writes omit top-level checkInAt; all rows have dateKey. */
+        .orderBy('dateKey', 'desc')
         .limit(1200)
         .get()
         .then(function(snap) {

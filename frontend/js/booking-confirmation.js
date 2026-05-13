@@ -11,15 +11,15 @@
     }
 
     /**
-     * Payload scanners see — prefix helps recognize GymDD codes.
+     * Payload scanners see — prefix helps recognize DaDaGym codes.
      * v2 includes Firebase member uid + Firestore booking doc id for direct check-in lookup.
      */
     function qrPayload(bookingCode, options) {
         options = options || {};
         if (options.memberId && options.bookingId) {
-            return 'GymDD|v2|' + String(options.memberId) + '|' + String(options.bookingId);
+            return 'DaDaGym|v2|' + String(options.memberId) + '|' + String(options.bookingId);
         }
-        return 'GymDD|' + String(bookingCode);
+        return 'DaDaGym|' + String(bookingCode);
     }
 
     /**

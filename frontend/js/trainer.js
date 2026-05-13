@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════
-   GymDD — Trainer dashboard + chat (RTDB)
+   DaDaGym — Trainer dashboard + chat (RTDB)
    ═══════════════════════════════════════ */
 
 import { firebaseConfig } from './firebase-config.js';
@@ -24,6 +24,22 @@ var trainerHtml5QrCode = null;
 var trainerClassTrackWeekOffset = 0;
 var trainerSessionLogModalInst = null;
 var trainerSessionLogContext = null;
+
+/** Booking class id for accepted 1:1 session requests (must match Firestore rules). */
+var PERSONAL_1TO1_CLASS_ID = '__personal_1to1__';
+
+function personalSessionSlotKey(memberId, date, timeRaw) {
+    var t = String(timeRaw || '')
+        .trim()
+        .replace(/:/g, '-')
+        .replace(/\//g, '_');
+    if (!t) t = 'na';
+    return memberId + '_' + PERSONAL_1TO1_CLASS_ID + '_' + date + '_' + t;
+}
+
+function randomFiveDigitBookingCode() {
+    return Math.floor(10000 + Math.random() * 90000);
+}
 
 function refreshTrainerGymPublicIdUi(gymPid) {
     var side = $('sidebarGymPublicId');
@@ -125,10 +141,38 @@ auth.onAuthStateChanged(function(user) {
     });
 });
 
+function doTrainerLogout() {
+    auth.signOut().then(function() {
+        window.location.href = 'login.html';
+    });
+}
+
 if ($('btnLogout')) {
     $('btnLogout').addEventListener('click', function() {
-        if (chatMsgUnsub) { chatMsgUnsub(); chatMsgUnsub = null; }
-        auth.signOut().then(function() { window.location.href = 'login.html'; });
+        if (chatMsgUnsub) {
+            chatMsgUnsub();
+            chatMsgUnsub = null;
+        }
+        var modalEl = $('logoutConfirmModal');
+        if (!modalEl || typeof bootstrap === 'undefined') {
+            if (window.confirm('Are you sure you want to log out?')) doTrainerLogout();
+            return;
+        }
+        bootstrap.Modal.getOrCreateInstance(modalEl).show();
+    });
+}
+if ($('btnLogoutConfirm')) {
+    $('btnLogoutConfirm').addEventListener('click', function() {
+        if (chatMsgUnsub) {
+            chatMsgUnsub();
+            chatMsgUnsub = null;
+        }
+        var modalEl = $('logoutConfirmModal');
+        if (modalEl && typeof bootstrap !== 'undefined') {
+            var inst = bootstrap.Modal.getInstance(modalEl);
+            if (inst) inst.hide();
+        }
+        doTrainerLogout();
     });
 }
 
@@ -324,7 +368,8 @@ if (btnGenerateTrainerIdCard) {
             role: 'trainer',
             joinDate: d.createdAt || null,
             photoURL: (d.photoURL && String(d.photoURL).trim()) || (currentUser.photoURL || '') || '',
-            userId: pid || currentUser.uid,
+            firebaseUid: currentUser.uid,
+            gymPublicId: pid,
             phone: (d.phone && String(d.phone).trim()) || '',
             specialization: (d.specialization && String(d.specialization).trim()) || '',
             gymLocation: 'RA1 2SU, 7 Krishal Road',
@@ -673,6 +718,32 @@ function formatClassScheduleTrainer(c) {
     var parts = [day, time];
     if (dur) parts.push(dur);
     return parts.join(' · ');
+}
+
+/** Defaults for "request to teach" modal from class.schedule. */
+function defaultRequestTimeDurationFromClass(c) {
+    var s = (c && c.schedule) || {};
+    var timeStr = '';
+    if (s.time != null) {
+        if (typeof s.time === 'string') timeStr = s.time.trim();
+        else if (typeof s.time === 'number') timeStr = String(s.time);
+        else timeStr = '';
+    }
+    var dur = 60;
+    if (s.duration != null && !isNaN(Number(s.duration))) {
+        dur = Number(s.duration);
+    }
+    if (dur < 15) dur = 60;
+    if (dur > 300) dur = 300;
+    return { time: timeStr, duration: dur };
+}
+
+function escAttr(s) {
+    if (s == null || s === '') return '';
+    return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;');
 }
 
 function showClassAssignAlert(msg, type) {
@@ -1209,7 +1280,12 @@ function loadTrainerClassRequestsMap() {
                 if (d.classId) {
                     trainerClassRequestByClassId[d.classId] = {
                         id: doc.id,
-                        status: d.status || 'pending'
+                        status: d.status || 'pending',
+                        proposedTime: d.proposedTime != null ? String(d.proposedTime).trim() : '',
+                        pendingProposedDuration:
+                            d.proposedDurationMinutes != null && !isNaN(Number(d.proposedDurationMinutes))
+                                ? Number(d.proposedDurationMinutes)
+                                : null
                     };
                 }
             });
@@ -1229,28 +1305,156 @@ function formatTrainerReqDate(ts) {
     return new Date(sec * 1000).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
 }
 
-function resolveMemberClassRequest(docId, approved) {
-    if (!docId) return;
-    if (!confirm(approved ? 'Approve this member\'s request for this class?' : 'Decline this member request?')) return;
-    db.collection('memberClassRequests').doc(docId).update({
-        status: approved ? 'approved' : 'rejected',
-        resolvedAt: firebase.firestore.FieldValue.serverTimestamp(),
-        resolvedBy: currentUid,
-        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-    }).then(function() {
-        showClassAssignAlert(approved ? 'Request approved.' : 'Request declined.', approved ? 'success' : 'secondary');
-        loadMemberClassRequestsForTrainer();
-    }).catch(function(err) {
-        showClassAssignAlert(err.message || 'Could not update request.', 'danger');
-    });
+function formatTrainerPersonalSessionWhen(d) {
+    var date = (d.preferredDate != null ? String(d.preferredDate) : '').trim();
+    var time = (d.preferredTime != null ? String(d.preferredTime) : '').trim();
+    var dur =
+        d.preferredDurationMinutes != null && !isNaN(Number(d.preferredDurationMinutes))
+            ? Number(d.preferredDurationMinutes)
+            : null;
+    var when = '';
+    if (!date && !time) when = '—';
+    else if (!time) when = date;
+    else if (!date) when = time;
+    else when = date + ' · ' + time;
+    if (dur != null && dur > 0) {
+        if (when === '—') when = dur + ' min';
+        else when += ' · ' + dur + ' min';
+    }
+    return when;
 }
 
-function loadMemberClassRequestsForTrainer() {
-    var tbody = $('trainerMemberRequestsBody');
-    if (!tbody) return;
-    tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-3">Loading…</td></tr>';
+function resolveTrainerPersonalSession(docId, accept) {
+    if (!docId) return;
+    if (!accept) {
+        if (!confirm('Decline this session request?')) return;
+        db.collection('trainerSessionRequests')
+            .doc(docId)
+            .update({
+                status: 'declined',
+                trainerResolvedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                trainerResolvedBy: currentUid
+            })
+            .then(function() {
+                showClassAssignAlert('Marked declined.', 'secondary');
+                loadTrainerPersonalSessionRequests();
+            })
+            .catch(function(err) {
+                showClassAssignAlert(err.message || 'Could not update request.', 'danger');
+            });
+        return;
+    }
 
-    db.collection('memberClassRequests').where('trainerId', '==', currentUid).get()
+    if (
+        !confirm(
+            'Accept this 1:1 session? It will be added to the member\'s My Bookings with a reference number for check-in.'
+        )
+    ) {
+        return;
+    }
+
+    db.collection('trainerSessionRequests')
+        .doc(docId)
+        .get()
+        .then(function(reqSnap) {
+            if (!reqSnap.exists) throw new Error('Request not found.');
+            var req = reqSnap.data();
+            if ((req.status || 'pending') !== 'pending') {
+                throw new Error('This request was already resolved.');
+            }
+            var memberId = req.memberId;
+            var date = req.preferredDate;
+            var timeRaw = req.preferredTime;
+            if (!memberId || !date || !timeRaw) throw new Error('Request is missing date or time.');
+
+            var slotId = personalSessionSlotKey(memberId, date, timeRaw);
+            var trainerName = (trainerData && trainerData.displayName) ? trainerData.displayName.trim() : '';
+            if (!trainerName && currentUser && currentUser.email) trainerName = currentUser.email;
+            if (!trainerName) trainerName = 'Trainer';
+
+            var durationMin = req.preferredDurationMinutes;
+            if (durationMin != null && typeof durationMin !== 'number') {
+                durationMin = parseInt(durationMin, 10);
+            }
+            if (durationMin != null && isNaN(durationMin)) durationMin = null;
+
+            function commitWithCode(code) {
+                var batch = db.batch();
+                var reqRef = db.collection('trainerSessionRequests').doc(docId);
+                var bookRef = db.collection('bookings').doc(slotId);
+                var lookupRef = db.collection('bookingLookups').doc(String(code));
+
+                batch.update(reqRef, {
+                    status: 'accepted',
+                    trainerResolvedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                    trainerResolvedBy: currentUid,
+                    bookingId: slotId,
+                    bookingCode: code,
+                    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                });
+
+                var bookPayload = {
+                    memberId: memberId,
+                    memberName: req.memberName || '',
+                    memberEmail: req.memberEmail || '',
+                    trainerId: currentUid,
+                    trainerName: trainerName,
+                    classId: PERSONAL_1TO1_CLASS_ID,
+                    className: '1:1 Personal session',
+                    scheduleDay: '',
+                    date: date,
+                    time: timeRaw,
+                    slotKey: slotId,
+                    bookingCode: code,
+                    status: 'confirmed',
+                    guestTrialBooking: false,
+                    personalSession: true,
+                    personalSessionRequestId: docId,
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                };
+                if (durationMin != null) bookPayload.durationMinutes = durationMin;
+
+                batch.set(bookRef, bookPayload);
+                batch.set(lookupRef, {
+                    bookingId: slotId,
+                    memberId: memberId,
+                    trainerId: currentUid,
+                    trainerName: trainerName,
+                    className: '1:1 Personal session',
+                    date: date,
+                    time: timeRaw
+                });
+
+                return batch.commit();
+            }
+
+            var code1 = randomFiveDigitBookingCode();
+            return commitWithCode(code1).catch(function(err) {
+                if (err && err.code === 'already-exists') {
+                    return commitWithCode(randomFiveDigitBookingCode());
+                }
+                throw err;
+            });
+        })
+        .then(function() {
+            showClassAssignAlert('Session accepted — the member will see it under My Bookings.', 'success');
+            loadTrainerPersonalSessionRequests();
+        })
+        .catch(function(err) {
+            console.error(err);
+            showClassAssignAlert(err.message || 'Could not accept session.', 'danger');
+        });
+}
+
+function loadTrainerPersonalSessionRequests() {
+    var tbody = $('trainerPersonalSessionBody');
+    if (!tbody) return;
+    tbody.innerHTML =
+        '<tr><td colspan="5" class="text-center text-muted py-3">Loading…</td></tr>';
+
+    db.collection('trainerSessionRequests')
+        .where('trainerId', '==', currentUid)
+        .get()
         .then(function(snap) {
             var rows = [];
             snap.forEach(function(doc) {
@@ -1265,7 +1469,7 @@ function loadMemberClassRequestsForTrainer() {
             tbody.innerHTML = '';
             if (!rows.length) {
                 tbody.innerHTML =
-                    '<tr><td colspan="4" class="text-center text-muted py-4">No pending member requests.</td></tr>';
+                    '<tr><td colspan="5" class="text-center text-muted py-4">No pending personal session requests.</td></tr>';
                 return;
             }
 
@@ -1276,37 +1480,54 @@ function loadMemberClassRequestsForTrainer() {
                 var tdM = document.createElement('td');
                 tdM.textContent = d.memberName || d.memberEmail || '—';
 
-                var tdC = document.createElement('td');
-                tdC.textContent = d.className || d.classId || '—';
+                var tdW = document.createElement('td');
+                tdW.className = 'small text-nowrap';
+                tdW.textContent = formatTrainerPersonalSessionWhen(d);
+
+                var tdR = document.createElement('td');
+                tdR.className = 'small';
+                var reason = (d.reason != null ? String(d.reason).trim() : '') || '';
+                if (reason.length > 72) {
+                    tdR.textContent = reason.slice(0, 69) + '…';
+                    tdR.title = reason;
+                } else {
+                    tdR.textContent = reason || '—';
+                    if (reason) tdR.title = reason;
+                }
 
                 var tdT = document.createElement('td');
                 tdT.className = 'small text-muted';
                 tdT.textContent = formatTrainerReqDate(d.createdAt);
 
                 var tdA = document.createElement('td');
-                var bOk = document.createElement('button');
-                bOk.type = 'button';
-                bOk.className = 'btn btn-sm btn-success me-1';
-                bOk.title = 'Approve';
-                bOk.innerHTML = '<i class="fas fa-check"></i>';
-                (function(id) {
-                    bOk.addEventListener('click', function() { resolveMemberClassRequest(id, true); });
+                var y = document.createElement('button');
+                y.type = 'button';
+                y.className = 'btn btn-sm btn-success me-1';
+                y.title = 'Accept';
+                y.innerHTML = '<i class="fas fa-check"></i>';
+                (function(pid) {
+                    y.addEventListener('click', function() {
+                        resolveTrainerPersonalSession(pid, true);
+                    });
                 })(row.id);
 
-                var bNo = document.createElement('button');
-                bNo.type = 'button';
-                bNo.className = 'btn btn-sm btn-outline-danger';
-                bNo.title = 'Decline';
-                bNo.innerHTML = '<i class="fas fa-times"></i>';
-                (function(id2) {
-                    bNo.addEventListener('click', function() { resolveMemberClassRequest(id2, false); });
+                var n = document.createElement('button');
+                n.type = 'button';
+                n.className = 'btn btn-sm btn-outline-danger';
+                n.title = 'Decline';
+                n.innerHTML = '<i class="fas fa-times"></i>';
+                (function(pid2) {
+                    n.addEventListener('click', function() {
+                        resolveTrainerPersonalSession(pid2, false);
+                    });
                 })(row.id);
 
-                tdA.appendChild(bOk);
-                tdA.appendChild(bNo);
+                tdA.appendChild(y);
+                tdA.appendChild(n);
 
                 tr.appendChild(tdM);
-                tr.appendChild(tdC);
+                tr.appendChild(tdW);
+                tr.appendChild(tdR);
                 tr.appendChild(tdT);
                 tr.appendChild(tdA);
                 tbody.appendChild(tr);
@@ -1315,7 +1536,7 @@ function loadMemberClassRequestsForTrainer() {
         .catch(function(err) {
             console.error(err);
             tbody.innerHTML =
-                '<tr><td colspan="4" class="text-center text-danger py-3">Could not load member requests.</td></tr>';
+                '<tr><td colspan="5" class="text-center text-danger py-3">Could not load personal session requests.</td></tr>';
         });
 }
 
@@ -1354,22 +1575,48 @@ function renderTrainerClassCard(item, isAssigned) {
     } else {
         var req = trainerClassRequestByClassId[item.id];
         var st = req ? req.status : null;
+        var defTd = defaultRequestTimeDurationFromClass(c);
         var actions = document.createElement('div');
         actions.className = 'mt-3';
 
+        var reqBtnAttrs =
+            ' data-class-id="' + escAttr(item.id) + '"' +
+            ' data-class-name="' + escAttr(name) + '"' +
+            ' data-default-time="' + escAttr(defTd.time) + '"' +
+            ' data-default-duration="' + escAttr(String(defTd.duration)) + '"';
+
         if (st === 'pending') {
-            actions.innerHTML = '<span class="badge bg-warning text-dark"><i class="fas fa-clock me-1"></i>Request pending admin review</span>';
+            var extra = '';
+            if (req && (req.proposedTime || req.pendingProposedDuration != null)) {
+                extra = '<div class="small text-white-50 mt-1">';
+                if (req.proposedTime) {
+                    extra += escHtml(req.proposedTime);
+                }
+                if (req.pendingProposedDuration != null) {
+                    extra +=
+                        (req.proposedTime ? ' · ' : '') +
+                        escHtml(String(req.pendingProposedDuration)) +
+                        ' min';
+                }
+                extra += '</div>';
+            }
+            actions.innerHTML =
+                '<span class="badge bg-warning text-dark"><i class="fas fa-clock me-1"></i>Request pending admin review</span>' +
+                extra;
         } else if (st === 'rejected') {
             actions.innerHTML =
                 '<span class="badge bg-secondary me-2 mb-2">Not approved</span>' +
-                '<button type="button" class="btn btn-sm btn-outline-primary request-class-btn" data-class-id="' +
-                    escHtml(item.id) + '"><i class="fas fa-redo me-1"></i>Request again</button>';
+                '<button type="button" class="btn btn-sm btn-outline-primary request-class-btn"' +
+                reqBtnAttrs +
+                '><i class="fas fa-redo me-1"></i>Request again</button>';
         } else if (st === 'approved') {
-            actions.innerHTML = '<span class="badge bg-success">Approved — reload if this still shows here.</span>';
+            actions.innerHTML =
+                '<span class="badge bg-success">Approved — reload if this still shows here.</span>';
         } else {
             actions.innerHTML =
-                '<button type="button" class="btn btn-sm btn-primary request-class-btn" data-class-id="' +
-                    escHtml(item.id) + '"><i class="fas fa-paper-plane me-1"></i>Request to teach</button>';
+                '<button type="button" class="btn btn-sm btn-primary request-class-btn"' +
+                reqBtnAttrs +
+                '><i class="fas fa-paper-plane me-1"></i>Request to teach</button>';
         }
         body.appendChild(actions);
     }
@@ -1439,7 +1686,7 @@ function loadTrainerClasses() {
             });
         }
 
-        loadMemberClassRequestsForTrainer();
+        loadTrainerPersonalSessionRequests();
         loadTrainerWeekSessions();
         loadTrainerOverviewStats();
     }).catch(function(err) {
@@ -1449,49 +1696,107 @@ function loadTrainerClasses() {
     });
 }
 
-function submitTrainerClassRequest(classId) {
+function openTrainerRequestTeachModal(btn) {
+    if (!btn || !window.bootstrap) return;
+    var id = btn.getAttribute('data-class-id');
+    if (!id) return;
+    var name = btn.getAttribute('data-class-name') || '';
+    var defTime = btn.getAttribute('data-default-time') || '';
+    var defDur = btn.getAttribute('data-default-duration') || '60';
+    var hid = $('trtClassId');
+    var lab = $('trtClassLabel');
+    var timeInp = $('trtProposedTime');
+    var durInp = $('trtProposedDuration');
+    if (!hid || !lab || !timeInp || !durInp) return;
+    hid.value = id;
+    lab.textContent = name ? 'Request to teach: ' + name : 'Request to teach this class';
+    timeInp.value = defTime;
+    var d = parseInt(defDur, 10);
+    durInp.value = !isNaN(d) && d >= 15 ? String(d) : '60';
+    bootstrap.Modal.getOrCreateInstance($('trainerRequestTeachModal')).show();
+}
+
+function submitTrainerClassRequestFromModal() {
     if (!currentUid) return;
+    var hid = $('trtClassId');
+    var classId = hid ? String(hid.value || '').trim() : '';
+    if (!classId) return;
+
+    var proposedTimeEl = $('trtProposedTime');
+    var proposedDurEl = $('trtProposedDuration');
+    var proposedTime = proposedTimeEl ? String(proposedTimeEl.value || '').trim() : '';
+    var proposedDuration = proposedDurEl ? parseInt(proposedDurEl.value, 10) : NaN;
+
+    if (!proposedTime) {
+        showClassAssignAlert('Enter the time you can teach this class (e.g. 09:00).', 'warning');
+        return;
+    }
+    if (isNaN(proposedDuration) || proposedDuration < 15 || proposedDuration > 300) {
+        showClassAssignAlert('Duration must be between 15 and 300 minutes.', 'warning');
+        return;
+    }
+
     var tname = (trainerData && trainerData.displayName) ? trainerData.displayName.trim() : '';
     if (!tname && currentUser && currentUser.email) tname = currentUser.email;
     if (!tname) tname = 'Trainer';
     var temail = (currentUser && currentUser.email) || '';
-
     var rid = trainerClassRequestDocId(classId);
 
-    db.collection('classes').doc(classId).get().then(function(doc) {
-        if (!doc.exists) {
-            showClassAssignAlert('This class could not be found.', 'danger');
-            return null;
-        }
-        var c = doc.data();
-        var tid = (c.trainerId || '').trim();
-        if (tid && tid !== currentUid) {
-            showClassAssignAlert('This class already has a trainer assigned.', 'warning');
-            return null;
-        }
-        if (tid === currentUid) {
-            showClassAssignAlert('You are already assigned to this class.', 'info');
-            return null;
-        }
+    db.collection('classes')
+        .doc(classId)
+        .get()
+        .then(function(doc) {
+            if (!doc.exists) {
+                showClassAssignAlert('This class could not be found.', 'danger');
+                return null;
+            }
+            var c = doc.data();
+            var tid = (c.trainerId || '').trim();
+            if (tid && tid !== currentUid) {
+                showClassAssignAlert('This class already has a trainer assigned.', 'warning');
+                return null;
+            }
+            if (tid === currentUid) {
+                showClassAssignAlert('You are already assigned to this class.', 'info');
+                return null;
+            }
 
-        return db.collection('trainerClassRequests').doc(rid).set({
-            classId: classId,
-            className: c.name || '',
-            classType: c.type || '',
-            trainerId: currentUid,
-            trainerName: tname,
-            trainerEmail: temail,
-            status: 'pending',
-            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-        }, { merge: true }).then(function() { return true; });
-    }).then(function(saved) {
-        if (!saved) return;
-        showClassAssignAlert('Request submitted. A gym admin will review it.', 'success');
-        loadTrainerClasses();
-    }).catch(function(err) {
-        showClassAssignAlert(err.message || 'Could not submit request.', 'danger');
-    });
+            return db
+                .collection('trainerClassRequests')
+                .doc(rid)
+                .set(
+                    {
+                        classId: classId,
+                        className: c.name || '',
+                        classType: c.type || '',
+                        trainerId: currentUid,
+                        trainerName: tname,
+                        trainerEmail: temail,
+                        proposedTime: proposedTime,
+                        proposedDurationMinutes: proposedDuration,
+                        status: 'pending',
+                        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                    },
+                    { merge: true }
+                )
+                .then(function() {
+                    return true;
+                });
+        })
+        .then(function(saved) {
+            if (!saved) return;
+            var m = $('trainerRequestTeachModal');
+            if (m) {
+                var inst = bootstrap.Modal.getInstance(m);
+                if (inst) inst.hide();
+            }
+            showClassAssignAlert('Request submitted. A gym admin will review it.', 'success');
+            loadTrainerClasses();
+        })
+        .catch(function(err) {
+            showClassAssignAlert(err.message || 'Could not submit request.', 'danger');
+        });
 }
 
 var secClassesEl = $('sec-classes');
@@ -1529,8 +1834,14 @@ if (secClassesEl) {
 
         if (!btn || !btn.getAttribute('data-class-id')) return;
 
-        submitTrainerClassRequest(btn.getAttribute('data-class-id'));
+        openTrainerRequestTeachModal(btn);
 
+    });
+}
+
+if ($('btnTrtSubmit')) {
+    $('btnTrtSubmit').addEventListener('click', function() {
+        submitTrainerClassRequestFromModal();
     });
 }
 
@@ -1706,7 +2017,7 @@ function openTrainerAdminChat() {
             '<div class="chat-room-avatar">A</div>' +
             '<div class="chat-room-info">' +
                 '<div class="chat-room-name">Admin</div>' +
-                '<div class="chat-room-last">GymDD support</div>' +
+                '<div class="chat-room-last">DaDaGym support</div>' +
             '</div>';
         list.appendChild(div);
     }
@@ -1833,14 +2144,18 @@ function trainerStartQrScanner() {
 
 function trainerRenderOtherTrainerNotice(L) {
     var tname = L.trainerName && String(L.trainerName).trim() ? L.trainerName : 'Another trainer';
-    var tim = L.time != null && String(L.time).trim() !== '' ? String(L.time) : '—';
+    var cname = L.className != null && String(L.className).trim() !== '' ? String(L.className).trim() : '—';
+    var dat = L.date != null && String(L.date).trim() !== '' ? String(L.date).trim() : '—';
+    var tim = L.time != null && String(L.time).trim() !== '' ? String(L.time).trim() : '—';
+    var whenLine = dat !== '—' || tim !== '—' ? escHtml(dat) + ' · ' + escHtml(tim) : '—';
     trainerCheckinSetResult(
         '<div class="alert alert-warning border-0 mb-0">' +
             '<div class="fw-bold mb-2"><i class="fas fa-user-friends me-2"></i>This booking is not with you</div>' +
-            '<p class="small mb-1 text-white-50">Only the assigned trainer’s name and class time are shown.</p>' +
+            '<p class="small mb-1 text-white-50">Assigned trainer, class, and session time are shown so you can direct the member.</p>' +
             '<hr class="border-secondary">' +
             '<div><span class="text-muted small text-uppercase">Trainer</span><div class="fw-semibold">' + escHtml(tname) + '</div></div>' +
-            '<div class="mt-2"><span class="text-muted small text-uppercase">Class time</span><div class="fw-semibold">' + escHtml(tim) + '</div></div>' +
+            '<div class="mt-2"><span class="text-muted small text-uppercase">Class</span><div class="fw-semibold">' + escHtml(cname) + '</div></div>' +
+            '<div class="mt-2"><span class="text-muted small text-uppercase">When</span><div class="fw-semibold">' + whenLine + '</div></div>' +
         '</div>'
     );
 }
@@ -1854,8 +2169,9 @@ function trainerRenderFullBooking(bookingId, b) {
         '<div class="mb-2"><span class="text-muted small text-uppercase">Reference</span><div class="fw-bold fs-5">' + escHtml(refNum) + '</div></div>',
         '<div class="mb-2"><span class="text-muted small text-uppercase">Member</span><div class="fw-semibold">' + escHtml(b.memberName || '—') + '</div>' +
             '<div class="small text-muted">' + escHtml(b.memberEmail || '') + '</div></div>',
-        '<div class="mb-2"><span class="text-muted small text-uppercase">Class</span><div>' + escHtml(b.className || '—') + '</div></div>',
-        '<div class="mb-2"><span class="text-muted small text-uppercase">When</span><div>' + escHtml(b.date || '—') + ' · ' + escHtml(b.time || '—') + '</div></div>',
+        '<div class="mb-2"><span class="text-muted small text-uppercase">Class</span><div class="fw-semibold">' + escHtml(b.className || '—') + '</div></div>',
+        '<div class="mb-2"><span class="text-muted small text-uppercase">Date</span><div class="fw-semibold">' + escHtml(b.date || '—') + '</div></div>',
+        '<div class="mb-2"><span class="text-muted small text-uppercase">Class time</span><div class="fw-semibold">' + escHtml(b.time || '—') + '</div></div>',
         '<div class="mb-3"><span class="text-muted small text-uppercase">Status</span><div>' + escHtml(st || '—') +
             (sessionOn ? ' <span class="badge bg-success ms-1">Session started</span>' : '') + '</div></div>'
     ];
@@ -1935,6 +2251,8 @@ function trainerResolveBooking(refRaw) {
                     trainerRenderOtherTrainerNotice({
                         trainerId: b.trainerId,
                         trainerName: b.trainerName,
+                        className: b.className,
+                        date: b.date,
                         time: b.time
                     });
                     return;
@@ -1975,8 +2293,25 @@ function trainerResolveBooking(refRaw) {
             }
             var num = parseInt(codeKey, 10);
             if (isNaN(num)) {
-                trainerCheckinSetResult('<p class="text-warning small mb-0">No booking found for this reference.</p>');
-                return null;
+                return db.collection('bookings').doc(codeKey).get().then(function(bsnap) {
+                    if (!bsnap.exists) {
+                        trainerCheckinSetResult('<p class="text-warning small mb-0">No booking found for this reference.</p>');
+                        return;
+                    }
+                    var b = bsnap.data();
+                    var tid = (b.trainerId || '').trim();
+                    if (tid !== currentUid) {
+                        trainerRenderOtherTrainerNotice({
+                            trainerId: b.trainerId,
+                            trainerName: b.trainerName,
+                            className: b.className,
+                            date: b.date,
+                            time: b.time
+                        });
+                        return;
+                    }
+                    trainerRenderFullBooking(bsnap.id, b);
+                });
             }
             return db.collection('bookings').where('bookingCode', '==', num).where('trainerId', '==', currentUid).limit(1).get()
                 .then(function(q) {

@@ -3,7 +3,8 @@
  * Doc id: day_{subjectUid}_{dateKey} — alternates check-in / check-out all day; new dateKey after midnight starts fresh.
  */
 import { firebaseConfig } from './firebase-config.js';
-import { isValidGymPublicId } from './gym-public-id.js';
+import { isValidGymPublicId, parseDigitalIdQrInnerAfterBrandStrip } from './gym-public-id.js';
+import { normalizeBookingCheckinRaw } from './booking-checkin-parse.js';
 
 firebase.initializeApp(firebaseConfig);
 var db = firebase.firestore();
@@ -40,9 +41,10 @@ function dayPunchDocId(uid, dateKey) {
 }
 
 function normalizeScanPayload(raw) {
-    var s = String(raw || '').trim();
+    var s = normalizeBookingCheckinRaw(raw);
     if (!s) return '';
-    if (s.indexOf('GymDD|') === 0) s = s.slice(6).trim();
+    var m = s.match(/^(?:DaDaGym|GymDD)\|(.*)$/i);
+    if (m) return m[1].trim();
     return s.trim();
 }
 
@@ -80,6 +82,11 @@ function clearFeedback() {
 
 function resolveSubjectFromScan(normalized) {
     if (!normalized) return Promise.resolve(null);
+
+    var uidFromCard = parseDigitalIdQrInnerAfterBrandStrip(normalized);
+    if (uidFromCard) {
+        return loadMemberOrTrainerProfile(uidFromCard, '');
+    }
 
     if (isValidGymPublicId(normalized)) {
         return db
@@ -185,10 +192,11 @@ function runPunchTransaction(person) {
                 var cinMs = Date.now();
                 if (cur && typeof cur.toMillis === 'function') cinMs = cur.toMillis();
                 var mins = Math.max(0, Math.round((Date.now() - cinMs) / 60000));
+                /* serverTimestamp() is invalid inside array map elements; use client Timestamp. */
                 var newVisits = completed.concat([
                     {
                         checkInAt: cur,
-                        checkOutAt: firebase.firestore.FieldValue.serverTimestamp(),
+                        checkOutAt: firebase.firestore.Timestamp.now(),
                         minutesOnSite: mins
                     }
                 ]);
@@ -251,7 +259,7 @@ function processScanPayload(raw) {
             if (!person) {
                 showFeedback(
                     'err',
-                    'Unknown ID. Use your GymDD digital ID barcode/QR or a valid 6-character Gym ID.'
+                    'Unknown ID. Use your DaDaGym digital ID barcode/QR or a valid 6-character Gym ID.'
                 );
                 return null;
             }

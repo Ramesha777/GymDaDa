@@ -19,10 +19,10 @@ Enter the numeric **reference** shown on the member's booking screen, or paste t
 ### What the app does after a scan
 
 - **New QR format (v2):** the string looks like  
-  `GymDD|v2|<member Firebase UID>|<booking document ID>`  
+  `DaDaGym|v2|<member Firebase UID>|<booking document ID>`  
   The app opens that booking directly in Firestore and checks the member id matches the QR.
 
-- **Older QR format:** `GymDD|<reference number>`  
+- **Older QR format:** `DaDaGym|<reference number>`  
   The app resolves the booking via `bookingLookups` and/or a `bookingCode` query (same as before v2).
 
 **Trainers** only get full check-in actions for bookings where they are the assigned trainer; otherwise they see a short "not with you" style message.
@@ -40,8 +40,8 @@ The **reference number** is always shown for staff who prefer typing it.
 
 ### What the QR contains
 
-- **v2 (current):** member Firebase user id + Firestore booking document id (plus the `GymDD|v2|` prefix), so check-in does not rely only on the numeric code.
-- **Legacy:** numeric reference only (`GymDD|<code>`). Still supported.
+- **v2 (current):** member Firebase user id + Firestore booking document id (plus the `DaDaGym|v2|` prefix), so check-in does not rely only on the numeric code.
+- **Legacy:** numeric reference only (`DaDaGym|<code>`). Still supported.
 
 If an old screenshot only shows the short code, that still works for check-in.
 
@@ -100,4 +100,4 @@ firebase deploy --only firestore:rules
 
 ## Version note
 
-**v2** QR payloads were added so check-in can use **member id + booking document id** directly. **Legacy** `GymDD|<code>` payloads remain valid for older printed/screenshotted codes.
+**v2** QR payloads were added so check-in can use **member id + booking document id** directly. New QR codes use the `DaDaGym|` prefix. **Legacy** `GymDD|`-prefixed payloads remain valid for older printed/screenshotted codes.

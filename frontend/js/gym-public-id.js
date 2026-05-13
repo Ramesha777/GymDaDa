@@ -3,6 +3,28 @@
  * Stored in gymPublicIds/{id} (registry) and mirrored as gymPublicId on members/trainers/users.
  */
 
+/** Digital ID card + punch kiosk — same style as booking QRs (Html5Qrcode decodes plain text). */
+export var DIGITAL_ID_QR_PREFIX = 'DaDaGym|id|';
+
+export function buildDigitalIdQrPayload(firebaseUid) {
+    var uid = String(firebaseUid || '').trim();
+    if (!uid) return '';
+    return DIGITAL_ID_QR_PREFIX + uid;
+}
+
+/**
+ * Inner payload after the `DaDaGym|` / `GymDD|` strip — i.e. `id|{firebaseAuthUid}`.
+ */
+export function parseDigitalIdQrInnerAfterBrandStrip(inner) {
+    var s = String(inner || '').trim();
+    var m = s.match(/^id\|(.+)$/i);
+    if (!m) return null;
+    var uid = m[1].trim();
+    if (!uid || uid.length < 10 || uid.length > 128) return null;
+    if (!/^[A-Za-z0-9_-]+$/.test(uid)) return null;
+    return uid;
+}
+
 function letters3FromEmail(email) {
     var local = String(email || '').split('@')[0] || '';
     var buf = '';

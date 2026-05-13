@@ -93,6 +93,16 @@ service cloud.firestore {
         && d.kioskSource == r.kioskSource;
     }
 
+    // checkOutAt must be a real timestamp inside completedVisits[] — FieldValue.serverTimestamp() is invalid there,
+    // so the client sends Timestamp.now(). Allow reasonable skew vs request.time and require ordering after check-in.
+    function gymPunchClientCheckoutTimestampOk(checkOutTs, checkInTs) {
+      return checkOutTs is timestamp
+        && checkInTs is timestamp
+        && checkOutTs >= checkInTs
+        && checkOutTs <= request.time + duration.value(15, 'm')
+        && checkOutTs >= request.time - duration.value(24, 'h');
+    }
+
     function gymPunchVisitOpenCreatePublic(sessionId) {
       let d = request.resource.data;
       return d.keys().hasOnly([
@@ -128,7 +138,7 @@ service cloud.firestore {
         && d.currentCheckIn == null
         && last.keys().hasOnly(['checkInAt', 'checkOutAt', 'minutesOnSite'])
         && last.checkInAt == r.currentCheckIn
-        && last.checkOutAt == request.time
+        && gymPunchClientCheckoutTimestampOk(last.checkOutAt, r.currentCheckIn)
         && last.minutesOnSite is number
         && last.minutesOnSite >= 0
         && last.minutesOnSite <= 2000
@@ -170,7 +180,7 @@ service cloud.firestore {
         && d.completedVisits.size() == 1
         && v0.keys().hasOnly(['checkInAt', 'checkOutAt', 'minutesOnSite'])
         && v0.checkInAt == r.checkInAt
-        && v0.checkOutAt == request.time
+        && gymPunchClientCheckoutTimestampOk(v0.checkOutAt, r.checkInAt)
         && v0.minutesOnSite is number
         && v0.minutesOnSite >= 0
         && v0.minutesOnSite <= 2000
@@ -293,6 +303,63 @@ service cloud.firestore {
         && request.resource.data.scheduleDay == resource.data.scheduleDay;
     }
 
+    function trainerSessionRequestPath(rid) {
+      return /databases/$(database)/documents/trainerSessionRequests/$(rid);
+    }
+
+    // Trainer accepts 1:1 session: same batch updates request to accepted and creates booking + lookup.
+    function bookingPersonalSessionTrainerCreateOk(bookingId) {
+      let d = request.resource.data;
+      let sid = d.get('personalSessionRequestId', '');
+      return isApprovedTrainer()
+        && d.trainerId == request.auth.uid
+        && d.status == 'confirmed'
+        && d.get('personalSession', false) == true
+        && d.classId == '__personal_1to1__'
+        && d.className is string
+        && d.className.size() >= 1
+        && d.className.size() <= 200
+        && d.memberId is string
+        && d.memberId.size() >= 10
+        && d.memberId.size() <= 128
+        && d.slotKey == bookingId
+        && d.bookingCode is int
+        && d.bookingCode >= 10000
+        && d.bookingCode <= 99999
+        && d.date is string
+        && d.date.size() >= 8
+        && d.date.size() <= 32
+        && d.time is string
+        && d.time.size() >= 1
+        && d.time.size() <= 48
+        && (!d.keys().hasAny(['scheduleDay']) || d.scheduleDay is string)
+        && sid is string
+        && sid.size() >= 10
+        && sid.size() <= 128
+        && exists(trainerSessionRequestPath(sid))
+        && get(trainerSessionRequestPath(sid)).data.trainerId == request.auth.uid
+        && get(trainerSessionRequestPath(sid)).data.memberId == d.memberId
+        && get(trainerSessionRequestPath(sid)).data.status == 'accepted'
+        && get(trainerSessionRequestPath(sid)).data.preferredDate == d.date
+        && get(trainerSessionRequestPath(sid)).data.preferredTime == d.time;
+    }
+
+    function bookingLookupPersonalTrainerCreateOk(lookupCode) {
+      let d = request.resource.data;
+      let bid = d.bookingId;
+      return isApprovedTrainer()
+        && lookupCode.matches('^[0-9]{5}$')
+        && int(lookupCode) >= 10000
+        && int(lookupCode) <= 99999
+        && bid is string
+        && bid.size() > 0
+        && exists(/databases/$(database)/documents/bookings/$(bid))
+        && get(/databases/$(database)/documents/bookings/$(bid)).data.trainerId == request.auth.uid
+        && get(/databases/$(database)/documents/bookings/$(bid)).data.get('personalSession', false) == true
+        && get(/databases/$(database)/documents/bookings/$(bid)).data.memberId == d.memberId
+        && lookupCode == string(get(/databases/$(database)/documents/bookings/$(bid)).data.bookingCode);
+    }
+
     function classEnrolledPrev(data) {
       return data.keys().hasAny(['enrolled']) ? data.enrolled : 0;
     }
@@ -316,6 +383,40 @@ service cloud.firestore {
             && request.resource.data.enrolled >= 0
           )
         );
+    }
+
+    function classSessionEnrolledPrev(data) {
+      return data.keys().hasAny(['enrolled']) ? data.enrolled : 0;
+    }
+
+    // Per class + calendar date (recurring weekly sessions). Doc id: {classId}_{YYYY-MM-DD}.
+    function classSessionEnrolledCreateOk(sessionId) {
+      let d = request.resource.data;
+      return isSignedIn()
+        && d.keys().hasOnly(['classId', 'date', 'enrolled'])
+        && d.classId is string
+        && d.classId.size() > 0
+        && d.classId.size() <= 128
+        && d.date is string
+        && d.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && d.enrolled is int
+        && d.enrolled == 1
+        && sessionId == d.classId + '_' + d.date;
+    }
+
+    function classSessionEnrollmentPlusOneOk() {
+      return isSignedIn()
+        && request.resource.data.classId == resource.data.classId
+        && request.resource.data.date == resource.data.date
+        && request.resource.data.enrolled == classSessionEnrolledPrev(resource.data) + 1;
+    }
+
+    function classSessionEnrollmentMinusOneOk() {
+      return isSignedIn()
+        && request.resource.data.classId == resource.data.classId
+        && request.resource.data.date == resource.data.date
+        && request.resource.data.enrolled == classSessionEnrolledPrev(resource.data) - 1
+        && request.resource.data.enrolled >= 0;
     }
 
     // Assigned trainer logs a weekly recurring class occurrence (trainer dashboard session log).
@@ -605,6 +706,13 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    match /classSessionEnrolled/{sessionId} {
+      allow read: if isSignedIn();
+      allow create: if classSessionEnrolledCreateOk(sessionId);
+      allow update: if classSessionEnrollmentPlusOneOk() || classSessionEnrollmentMinusOneOk();
+      allow delete: if isAdmin();
+    }
+
     match /classes/{classId} {
       allow read: if isSignedIn();
       allow create, delete: if isAdmin();
@@ -616,10 +724,11 @@ service cloud.firestore {
     match /bookingLookups/{code} {
       allow get: if isApprovedTrainer() || isAdmin();
       allow list: if false;
-      allow create: if isSignedIn()
+      allow create: if (isSignedIn()
         && request.resource.data.memberId == request.auth.uid
         && request.resource.data.bookingId is string
-        && request.resource.data.bookingId.size() > 0;
+        && request.resource.data.bookingId.size() > 0)
+        || bookingLookupPersonalTrainerCreateOk(code);
       allow delete: if isAdmin() || resource.data.memberId == request.auth.uid;
       allow update: if false;
     }
@@ -633,9 +742,10 @@ service cloud.firestore {
         isAdmin()
       );
 
-      allow create: if isSignedIn()
+      allow create: if (isSignedIn()
         && request.resource.data.memberId == request.auth.uid
-        && request.resource.data.status == 'confirmed';
+        && request.resource.data.status == 'confirmed')
+        || bookingPersonalSessionTrainerCreateOk(bookingId);
 
       allow update: if isAdmin()
         || bookingTrainerSessionStartOk()
@@ -672,38 +782,6 @@ service cloud.firestore {
         && request.resource.data.trainerId == request.auth.uid
         && request.resource.data.status == 'pending';
       allow update, delete: if isAdmin();
-    }
-
-    // Member asks assigned trainer to approve interest in a specific class
-    match /memberClassRequests/{requestId} {
-      allow read: if isSignedIn() && (
-        isAdmin() ||
-        resource.data.memberId == request.auth.uid ||
-        resource.data.trainerId == request.auth.uid
-      );
-      allow create: if isSignedIn()
-        && request.resource.data.memberId == request.auth.uid
-        && request.resource.data.status == 'pending'
-        && exists(/databases/$(database)/documents/classes/$(request.resource.data.classId))
-        && get(/databases/$(database)/documents/classes/$(request.resource.data.classId)).data.trainerId == request.resource.data.trainerId;
-
-      allow update: if isAdmin() || (
-        resource.data.trainerId == request.auth.uid
-        && resource.data.status == 'pending'
-        && request.resource.data.memberId == resource.data.memberId
-        && request.resource.data.classId == resource.data.classId
-        && request.resource.data.trainerId == resource.data.trainerId
-        && request.resource.data.status in ['approved', 'rejected']
-      ) || (
-        resource.data.memberId == request.auth.uid
-        && resource.data.status == 'rejected'
-        && request.resource.data.memberId == resource.data.memberId
-        && request.resource.data.classId == resource.data.classId
-        && request.resource.data.trainerId == resource.data.trainerId
-        && request.resource.data.status == 'pending'
-      );
-
-      allow delete: if isAdmin();
     }
 
     // Member requests a 1:1 session with a trainer (from member dashboard)

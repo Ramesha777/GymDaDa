@@ -2,18 +2,22 @@
  * Dada Gym — digital ID card modal (vanilla JS).
  *
  * Props:
- *   name            — full name
- *   role            — 'member' | 'trainer' | 'admin' (case-insensitive; 'tutor' → trainer)
- *   joinDate        — Date | Firestore Timestamp-like | ISO string | null
- *   photoURL        — optional image URL
- *   userId           — encoded in QR (e.g. public gym ID or Firebase UID)
- *   specialization   — optional; trainer only
- *   phone            — shown on all cards (— if empty)
- *   membershipStatus — member only; e.g. plan + Active/Expired
- *   gymLocation      — footer; default RA1 2SU…
- *   gymWebsiteUrl    — footer href; default https://dadagym.netlify.app
- *   gymWebsiteLabel  — footer link text; default hostname from URL
+ *   name              — full name
+ *   role              — 'member' | 'trainer' | 'admin' (case-insensitive; 'tutor' → trainer)
+ *   joinDate          — Date | Firestore Timestamp-like | ISO string | null
+ *   photoURL          — optional image URL
+ *   firebaseUid       — Auth UID; encoded in QR as DaDaGym|id|{uid} (Html5Qrcode-friendly plain text)
+ *   gymPublicId       — optional 6-char Gym ID; shown on card face (QR still uses firebaseUid)
+ *   userId            — deprecated: only used if firebaseUid empty and value looks like a UID (not Gym ID)
+ *   specialization    — optional; trainer only
+ *   phone             — shown on all cards (— if empty)
+ *   membershipStatus  — member only; e.g. plan + Active/Expired
+ *   gymLocation       — footer; default RA1 2SU…
+ *   gymWebsiteUrl     — footer href; default https://dadagym.netlify.app
+ *   gymWebsiteLabel   — footer link text; default hostname from URL
  */
+
+import { buildDigitalIdQrPayload, isValidGymPublicId } from './gym-public-id.js';
 
 var CSS_ONCE = false;
 var QR_SCRIPT_PROMISE = null;
@@ -149,7 +153,7 @@ function mountIdCardPhoto(slot, name, photoURL) {
 
 /**
  * Open a Bootstrap 5 modal with the ID card. Removes itself when hidden.
- * @param {{ name?: string, role?: string, joinDate?: unknown, photoURL?: string, userId?: string, specialization?: string, phone?: string, membershipStatus?: string, gymLocation?: string, gymWebsiteUrl?: string, gymWebsiteLabel?: string }} props
+ * @param {{ name?: string, role?: string, joinDate?: unknown, photoURL?: string, firebaseUid?: string, gymPublicId?: string, userId?: string, specialization?: string, phone?: string, membershipStatus?: string, gymLocation?: string, gymWebsiteUrl?: string, gymWebsiteLabel?: string }} props
  */
 export function openIDCardModal(props) {
   ensureIdCardCss();
@@ -158,7 +162,17 @@ export function openIDCardModal(props) {
   var meta = ROLE_META[roleKey];
   var joinLabel = formatJoinDateForId(props && props.joinDate);
   var photoURL = String((props && props.photoURL) || '').trim();
-  var userId = String((props && props.userId) || '').trim() || '—';
+  var firebaseUid = String((props && props.firebaseUid) || '').trim();
+  if (!firebaseUid && props && props.userId) {
+    var legacyUid = String(props.userId).trim();
+    if (legacyUid.length >= 10 && /^[A-Za-z0-9_-]+$/.test(legacyUid) && !isValidGymPublicId(legacyUid)) {
+      firebaseUid = legacyUid;
+    }
+  }
+  var gymPublicId = '';
+  if (props && props.gymPublicId && isValidGymPublicId(String(props.gymPublicId).trim())) {
+    gymPublicId = String(props.gymPublicId).trim();
+  }
   var spec = String((props && props.specialization) || '').trim();
   var phone = String((props && props.phone) || '').trim();
   var trainerSpecHtml = '';
@@ -191,6 +205,17 @@ export function openIDCardModal(props) {
     escapeAttr(phone || '—') +
     '</span>' +
     '</div>';
+
+  var gymIdRowHtml = '';
+  if (gymPublicId) {
+    gymIdRowHtml =
+      '<div class="digital-id-card__row digital-id-card__row--gym-id">' +
+      '<span class="digital-id-card__row-label">Gym ID</span>' +
+      '<span class="digital-id-card__row-value font-monospace">' +
+      escapeAttr(gymPublicId) +
+      '</span>' +
+      '</div>';
+  }
 
   var gymLoc = String((props && props.gymLocation) || 'RA1 2SU, 7 Krishal Road').trim();
   var gymWebUrl = String((props && props.gymWebsiteUrl) || 'https://dadagym.netlify.app').trim();
@@ -289,6 +314,7 @@ export function openIDCardModal(props) {
       '</div>' +
       trainerSpecHtml +
       phoneRowHtml +
+      gymIdRowHtml +
       membershipRowHtml +
       '    <div class="digital-id-card__joined">' +
       '      <i class="fas fa-calendar-plus"></i>' +
@@ -316,14 +342,21 @@ export function openIDCardModal(props) {
     ensureQrCodeGlobal()
       .then(function(QRCode) {
         host.innerHTML = '';
+        var qrText = buildDigitalIdQrPayload(firebaseUid);
+        if (!qrText) {
+          host.innerHTML =
+            '<p class="digital-id-card__qr-fallback small mb-0">No account ID — sign in again and retry.</p>';
+          return;
+        }
+        var qrPx = qrText.length > 48 ? 168 : 148;
         new QRCode(host, {
-          text: userId,
-          width: 132,
-          height: 132,
+          text: qrText,
+          width: qrPx,
+          height: qrPx,
           colorDark: '#0a0a0a',
           colorLight: '#f8fafc',
           correctLevel:
-            QRCode.CorrectLevel != null ? QRCode.CorrectLevel.M : 0
+            QRCode.CorrectLevel != null ? QRCode.CorrectLevel.H : 0
         });
       })
       .catch(function() {
